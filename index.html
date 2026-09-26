@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meteo & Agro-Clima Dashboard | Delfry</title>
+    <style>
+        :root {
+            --bg-color: #f4f6f9;
+            --card-bg: #ffffff;
+            --text-color: #2c3e50;
+            --primary-color: #1a5276;
+            --accent-color: #2980b9;
+            --border-radius: 12px;
+            --shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1280px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 25px;
+        }
+
+        header h1 {
+            color: var(--primary-color);
+            font-size: 2.2rem;
+            margin-bottom: 8px;
+        }
+
+        header p {
+            color: #666;
+            font-size: 1rem;
+        }
+
+        .nav-tabs {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 25px;
+            flex-wrap: wrap;
+        }
+
+        .tab-btn {
+            background-color: var(--card-bg);
+            border: 2px solid var(--primary-color);
+            color: var(--primary-color);
+            padding: 10px 20px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            border-radius: 30px;
+            cursor: pointer;
+            transition: all 0.25s ease;
+        }
+
+        .tab-btn:hover, .tab-btn.active {
+            background-color: var(--primary-color);
+            color: #ffffff;
+        }
+
+        .content-section {
+            display: none;
+            background-color: var(--card-bg);
+            padding: 25px;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow);
+        }
+
+        .content-section.active {
+            display: block;
+        }
+
+        .map-wrapper {
+            text-align: center;
+        }
+
+        .map-wrapper img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        .map-info {
+            margin-top: 15px;
+            text-align: left;
+            background-color: #f8fafc;
+            padding: 15px 20px;
+            border-left: 4px solid var(--accent-color);
+            border-radius: 0 8px 8px 0;
+        }
+
+        .map-info h3 {
+            margin-top: 0;
+            color: var(--primary-color);
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 30px;
+            color: #888;
+            font-size: 0.85rem;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>Dashboard Meteo & Agro-Clima</h1>
+        <p>Previsioni Multi-Modello, Monitoraggio Agro-Meteo e Analisi Bioclimatica Storica ERA5</p>
+    </header>
+
+    <div class="nav-tabs">
+        <button class="tab-btn active" onclick="openTab(event, 'ens')">1. Multi-Model Ensemble</button>
+        <button class="tab-btn" onclick="openTab(event, 'det')">2. Multi-Model Deterministico</button>
+        <button class="tab-btn" onclick="openTab(event, 'agro')">3. Quadro Agro-Meteo (24h)</button>
+        <button class="tab-btn" onclick="openTab(event, 'clima')">4. Agro-Climatologia ERA5</button>
+    </div>
+
+    <!-- SEZIONE 1: ENSEMBLE -->
+    <div id="ens" class="content-section active">
+        <div class="map-wrapper">
+            <img src="mappa_multi_ensemble.png" alt="Mappa Multi-Model Ensemble">
+            <div class="map-info">
+                <h3>Multi-Model Ensemble Mean</h3>
+                <p>Media pesata delle simulazioni probabilistiche: <strong>50% ECMWF-ENS</strong>, <strong>25% GEFS</strong>, <strong>25% ICON-EPS</strong>.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- SEZIONE 2: DETERMINISTICO -->
+    <div id="det" class="content-section">
+        <div class="map-wrapper">
+            <img src="mappa_multi_deterministico.png" alt="Mappa Multi-Model Deterministico">
+            <div class="map-info">
+                <h3>Multi-Model Deterministico Ad Alta Risoluzione</h3>
+                <p>Combinazione dei principali modelli deterministici: <strong>50% ECMWF IFS</strong>, <strong>25% GFS</strong>, <strong>25% ICON</strong>.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- SEZIONE 3: AGRO-METEO -->
+    <div id="agro" class="content-section">
+        <div class="map-wrapper">
+            <img src="mappe_agrometeo_24h.png" alt="Mappe Agro-Meteo 24h">
+            <div class="map-info">
+                <h3>Quadro Agro-Meteo Operativo (Centro Italia)</h3>
+                <p>Rischio infezione fungina (Peronospora/Oidio), pioggia cumulata, Evapotraspirazione ($ET_0$) e Gradi Giorno ($GDD$).</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- SEZIONE 4: AGRO-CLIMA -->
+    <div id="clima" class="content-section">
+        <div class="map-wrapper">
+            <img src="mappa_agro_clima_era5.png" alt="Mappe Bioclimatiche ERA5">
+            <div class="map-info">
+                <h3>Zonazione Agro-Climatica Viticola (ERA5 Historical)</h3>
+                <p>Indici bioclimatici storici di <strong>Huglin (HI)</strong> e <strong>Winkler (WI)</strong> per la viticoltura.</p>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        Elaborazione dati & Grafica: <strong>Delfry</strong>
+    </footer>
+</div>
+
+<script>
+    function openTab(evt, tabName) {
+        var i, tabcontent, tablinks;
+        tabcontent = document.getElementsByClassName("content-section");
+        for (i = 0; i < tabcontent.length; i++) {
+            tabcontent[i].classList.remove("active");
+        }
+        tablinks = document.getElementsByClassName("tab-btn");
+        for (i = 0; i < tablinks.length; i++) {
+            tablinks[i].classList.remove("active");
+        }
+        document.getElementById(tabName).classList.add("active");
+        evt.currentTarget.classList.add("active");
+    }
+</script>
+
+</body>
+</html>
