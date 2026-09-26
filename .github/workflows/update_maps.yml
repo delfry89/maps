@@ -17,22 +17,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      # Sostituiamo setup-python + apt install con setup-miniconda
+      - name: Set up Conda Environment
+        uses: conda-incubator/setup-miniconda@v3
         with:
-          python-version: '3.10'
+          environment-file: environment.yml
+          activate-environment: meteo # SOSTITUISCI 'meteo' con il nome esatto del tuo ambiente (è la prima riga dentro environment.yml, es: name: XXX)
+          auto-activate-base: false
+          use-mamba: true # Usa mamba per velocizzare il download delle librerie
 
-      - name: Install System Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgeos-dev libproj-dev proj-bin libeccodes-dev
-
-      - name: Install Python Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install numpy pandas xarray matplotlib cartopy herbie-data eccodes cfgrib
-
+      # Eseguiamo lo script dentro l'ambiente Conda attivato
       - name: Run map generation script
+        shell: bash -l {0} # FONDAMENTALE: forza l'uso dell'ambiente Conda caricato
         run: python generate_maps.py
 
       - name: Commit and push updated maps
