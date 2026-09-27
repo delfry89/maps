@@ -9,7 +9,8 @@ dependencies:
   - cfgrib
   - eccodes
   - herbie-data
-  - jupyterlab
-  - pip
+  - scipy
+  - netcdf4
   - geopandas
-prefix: C:\Users\utente\miniforge3\envs\meteo
+  - pandas
+  - numpy
