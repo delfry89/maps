@@ -1,0 +1,46 @@
+name: Generate Weather Maps Daily
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cache Cartopy Data
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/cartopy
+          key: cartopy-shapes-v1
+
+      - name: Set up Conda Environment
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          environment-file: environment.yml
+          activate-environment: meteo
+          auto-activate-base: false
+          use-mamba: true
+
+      - name: Run Weather Pipelines
+        shell: bash -l {0}
+        run: |
+          python 01_ensemble_intervallo.py
+          python 02_deterministico_intervallo.py
+          python 03_agrometeo_24h.py
+          python 04_bioclimatologia_era5.py
+
+      - name: Commit and push updated maps
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add *.png
+          git commit -m "Auto-update weather maps [skip ci]" || exit 0
+          git push
