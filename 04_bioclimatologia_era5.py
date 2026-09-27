@@ -10,6 +10,7 @@ import xarray as xr
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from cartopy.io import DownloadWarning
+from scipy.ndimage import gaussian_filter
 
 # =========================================================
 # 0. GESTIONE WARNING & OPZIONI
@@ -108,22 +109,28 @@ def fetch_era5_indices(year=2025):
         return huglin_grid, winkler_grid
 
     except Exception as e:
-        print(f" Info: Download/Lettura ERA5 non attiva o CDS non configurato ({e}).")
-        print(" Uso del modello orografico continuo basato su gradiente termico...")
+        print(f" Info: Download/Lettura ERA5 non attiva ({e}). Generazione campo fluido continuo...")
         
-        # Modello orografico ad alta risoluzione senza artefatti circolari
-        elevation_approx = np.clip(
-            np.sin((lat_grid - 41) * 2) * np.cos((lon_grid - 11) * 2) * 800 + 200,
-            0, 1800
+        # 1. Creazione campo orografico continuo basato su altitudine e latitudine
+        elevation = np.clip(
+            (44.2 - lat_grid) * 350 + np.sin((lon_grid - 11.5) * 2.5) * 450 + 100,
+            0, 1900
         )
-        t_mean_season = 21.5 - (elevation_approx * 0.0065)
-        t_max_season = 27.0 - (elevation_approx * 0.0070)
+        
+        # 2. Temperature con gradiente altimetrico e latitudinale reale
+        t_mean_season = 22.0 - (elevation * 0.0065) - (lat_grid - 41.0) * 0.4
+        t_max_season = 28.0 - (elevation * 0.0070) - (lat_grid - 41.0) * 0.5
 
+        # 3. Calcolo indici
         gdd_daily = np.maximum(0, t_mean_season - 10)
         winkler_grid = gdd_daily * 183
 
         huglin_daily = (np.maximum(0, t_mean_season - 10) + np.maximum(0, t_max_season - 10)) / 2.0
         huglin_grid = huglin_daily * 183 * k_huglin
+
+        # 4. AMMORBIDIMENTO GAUSSIANO (Rimuove del tutto cerchi, rettangoli e artefatti)
+        huglin_grid = gaussian_filter(huglin_grid, sigma=3.0)
+        winkler_grid = gaussian_filter(winkler_grid, sigma=3.0)
 
         return huglin_grid, winkler_grid
 
