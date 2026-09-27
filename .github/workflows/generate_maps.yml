@@ -29,6 +29,11 @@ jobs:
           auto-activate-base: false
           use-mamba: true
 
+      - name: Configura CDS API per ERA5
+        run: |
+          echo "url: ${{ secrets.CDS_URL }}" > ~/.cdsapirc
+          echo "key: ${{ secrets.CDS_KEY }}" >> ~/.cdsapirc
+
       - name: Run Weather Pipelines
         shell: bash -l {0}
         run: |
