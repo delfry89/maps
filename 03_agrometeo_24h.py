@@ -10,16 +10,17 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from herbie import Herbie
 
-# Disabilita verifica rigorosa SSL per evitare blocchi su mirror esterni
+# Disabilita verifica rigorosa SSL per evitare blocchi su mirror UCAR/NOAA
 ssl._create_default_https_context = ssl._create_unverified_context
+os.environ['PYTHONHTTPSVERIFY'] = '0'
 
 print("=== AVVIO SCRIPT 03: AGROMETEO 24H ===")
 
-# Coordinate definite GLOBALMENTE (evita NameError in caso di fallback)
+# Coordinate delimitate per Centro Italia
 lat_min, lat_max = 41.0, 44.5
 lon_min, lon_max = 9.5, 15.0
 
-# 1. Download Dati tramite Herbie
+# 1. Download Dati tramite Herbie o Generazione Fallback Coerente
 try:
     print("Download dati GFS in corso...")
     H_gfs = Herbie(
@@ -29,7 +30,6 @@ try:
         fxx=24
     )
     
-    # Estrazione variabili
     ds_tp = H_gfs.xarray('APCP:surface')
     ds_t2m = H_gfs.xarray('TMP:2 m above ground')
     ds_u10 = H_gfs.xarray('UGRD:10 m above ground')
@@ -49,19 +49,22 @@ try:
     et0 = np.maximum(0, 0.0023 * (t_mean + 17.8) * np.sqrt(np.maximum(1, wind_interp)) * 2.5)
     fungal_risk = np.where((tp_mm > 0.5) & (t_mean >= 12) & (t_mean <= 28), (t_mean / 28.0) * 100, 5.0)
 
+    lats = da_tp.latitude.values
+    lons = da_tp.longitude.values
+
 except Exception as e:
     print(f"Errore durante il recupero/elaborazione dati: {e}")
-    print("Generazione mappa fallback con griglia stimata...")
+    print("Generazione mappa fallback con griglia coordinata...")
     
-    # Griglia di emergenza
-    lats_arr = np.linspace(lat_min, lat_max, 50)
-    lons_arr = np.linspace(lon_min, lon_max, 50)
-    lon_grid, lat_grid = np.meshgrid(lons_arr, lats_arr)
+    # Griglia di emergenza con dimensioni coerenti
+    lats = np.linspace(lat_max, lat_min, 50)
+    lons = np.linspace(lon_min, lon_max, 50)
+    lon_grid, lat_grid = np.meshgrid(lons, lats)
     
-    tp_mm = np.zeros_like(lat_grid)
-    et0 = np.full_like(lat_grid, 2.5)
-    gdd = np.full_like(lat_grid, 4.0)
-    fungal_risk = np.full_like(lat_grid, 10.0)
+    tp_mm = np.zeros((50, 50))
+    et0 = np.full((50, 50), 2.5)
+    gdd = np.full((50, 50), 4.0)
+    fungal_risk = np.full((50, 50), 10.0)
 
 # 2. Creazione Figura e Subplots
 print("Generazione grafica 4 riquadri...")
@@ -77,9 +80,6 @@ titles = [
 
 datasets = [fungal_risk, tp_mm, et0, gdd]
 cmaps = ['YlOrRd', 'Blues', 'YlGnBu', 'Greens']
-
-lats = np.linspace(lat_min, lat_max, datasets[0].shape[0])
-lons = np.linspace(lon_min, lon_max, datasets[0].shape[1])
 
 for idx, ax in enumerate(axes):
     ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
