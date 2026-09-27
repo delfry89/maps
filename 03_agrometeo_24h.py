@@ -57,7 +57,7 @@ try:
     ds_v = H_gfs_24.xarray('VGRD:10 m above ground')
     da_u = standardize_coords(ds_u['u10'] if 'u10' in ds_u else ds_u[list(ds_u.data_vars)[0]])
     da_v = standardize_coords(ds_v['v10'] if 'v10' in ds_v else ds_v[list(ds_v.data_vars)[0]])
-    wind_interp = np.sqrt(da_u.values**2 + da_v.values**)
+    wind_interp = np.sqrt(da_u.values**2 + da_v.values**2)
 
     fungal_risk = np.clip((rh_interp - 50) * 2.2, 0, 100)
     fungal_risk = np.where((tmp_interp < 10) | (tmp_interp > 32), 0, fungal_risk)
