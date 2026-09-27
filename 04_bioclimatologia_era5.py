@@ -15,7 +15,6 @@ lat_min, lat_max = 41.2, 44.2
 lon_min, lon_max = 9.8, 14.5
 
 # 2. Generazione dati stazioni/griglia di origine per indici Huglin & Winkler
-# Utilizziamo una griglia regolare coerente per evitare bolle/cerchi concentrici
 lats_src = np.linspace(lat_min, lat_max, 25)
 lons_src = np.linspace(lon_min, lon_max, 25)
 lon_src_grid, lat_src_grid = np.meshgrid(lons_src, lats_src)
@@ -24,16 +23,15 @@ lon_src_grid, lat_src_grid = np.meshgrid(lons_src, lats_src)
 elevation_proxy = np.sin((lat_src_grid - 41) * 1.5) * 1000 + np.cos((lon_src_grid - 10) * 2.0) * 500
 elevation_proxy = np.clip(elevation_proxy, 0, 1800)
 
-# Indice di Huglin (HI) e Winkler (WI) realistici in base a gradiente termico altimetrico
+# Indice di Huglin (HI) e Winkler (WI) realistici
 huglin_src = 2600 - (elevation_proxy * 0.7) - (lat_src_grid - 41) * 80
 winkler_src = 2100 - (elevation_proxy * 0.6) - (lat_src_grid - 41) * 70
 
-# 3. Creazione Griglia ad Alta Risoluzione per il Rendering (Interpolazione Lineare/Cubica)
+# 3. Creazione Griglia ad Alta Risoluzione per il Rendering (Interpolazione Cubica)
 grid_lon = np.linspace(lon_min, lon_max, 300)
 grid_lat = np.linspace(lat_min, lat_max, 300)
 grid_lon_mesh, grid_lat_mesh = np.meshgrid(grid_lon, grid_lat)
 
-# Interpolazione CUBICA (elimina drasticamente i cerchi e le discontinuità)
 points = np.column_stack((lon_src_grid.ravel(), lat_src_grid.ravel()))
 huglin_interp = griddata(points, huglin_src.ravel(), (grid_lon_mesh, grid_lat_mesh), method='cubic')
 winkler_interp = griddata(points, winkler_src.ravel(), (grid_lon_mesh, grid_lat_mesh), method='cubic')
@@ -45,8 +43,9 @@ fig, axes = plt.subplots(1, 2, figsize=(16, 8), subplot_kw={'projection': ccrs.P
 norm_huglin = [1200, 1500, 1800, 2100, 2400, 2700, 3000]
 norm_winkler = [800, 1110, 1390, 1670, 1940, 2220, 2600]
 
-cmap_huglin = plt.cm.get_cmap('Spectral_r')
-cmap_winkler = plt.cm.get_cmap('RdYlBu_r')
+# Sintassi compatibile con Matplotlib moderno (senza get_cmap)
+cmap_huglin = matplotlib.colormaps['Spectral_r']
+cmap_winkler = matplotlib.colormaps['RdYlBu_r']
 
 # --- SUBPLOT 1: HUGLIN INDEX (HI) ---
 ax1 = axes[0]
