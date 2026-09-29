@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<html lan<!DOCTYPE html>
 <html lang="it">
 <head>
     <meta charset="UTF-8">
@@ -120,14 +121,16 @@
 <div class="container">
     <header>
         <h1>Dashboard Meteo & Agro-Clima</h1>
-        <p>Previsioni Multi-Modello, Monitoraggio Agro-Meteo e Analisi Bioclimatica Storica ERA5</p>
+        <p>Previsioni Multi-Modello, Monitoraggio Agro-Meteo, Difesa Fitosanitaria e Bilancio Idrico</p>
     </header>
 
     <div class="nav-tabs">
         <button class="tab-btn active" onclick="openTab(event, 'ens')">1. Multi-Model Ensemble</button>
         <button class="tab-btn" onclick="openTab(event, 'det')">2. Multi-Model Deterministico</button>
         <button class="tab-btn" onclick="openTab(event, 'agro')">3. Quadro Agro-Meteo (24h)</button>
-        <button class="tab-btn" onclick="openTab(event, 'clima')">4. Agro-Climatologia ERA5</button>
+        <button class="tab-btn" onclick="openTab(event, 'fito')">4. Rischio Fitosanitario</button>
+        <button class="tab-btn" onclick="openTab(event, 'idrico')">5. Bilancio Idrico & VPD</button>
+        <button class="tab-btn" onclick="openTab(event, 'clima')">6. Agro-Climatologia ERA5</button>
     </div>
 
     <!-- SEZIONE 1: ENSEMBLE -->
@@ -163,7 +166,29 @@
         </div>
     </div>
 
-    <!-- SEZIONE 4: AGRO-CLIMA -->
+    <!-- SEZIONE 4: FITOSANITARIO -->
+    <div id="fito" class="content-section">
+        <div class="map-wrapper">
+            <img src="mappe_rischio_fitosanitario.png" alt="Mappa Rischio Fitosanitario Oidio e Bagnatura Fogliare">
+            <div class="map-info">
+                <h3>Monitoraggio Rischio Fitosanitario e Bagnatura Fogliare</h3>
+                <p>Stima del rischio di sviluppo per <strong>Oidio (Uncinula necator)</strong> e conteggio delle <strong>Ore di Bagnatura Fogliare (LWD)</strong> nelle 24 ore per la prevenzione di Peronospora e Botrite.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- SEZIONE 5: BILANCIO IDRICO & VPD -->
+    <div id="idrico" class="content-section">
+        <div class="map-wrapper">
+            <img src="mappe_bilancio_idrico.png" alt="Mappa Bilancio Idrico e Deficit Pressione Vapore VPD">
+            <div class="map-info">
+                <h3>Bilancio Idrico (P - ET0) e Deficit di Pressione di Vapore (VPD)</h3>
+                <p>Mappa del deficit/surplus idrico (mm/giorno) combinata con il valore di <strong>VPD (kPa)</strong> per identificare situazioni di stress stomatico e blocco traspirativo della vite.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- SEZIONE 6: AGRO-CLIMA -->
     <div id="clima" class="content-section">
         <div class="map-wrapper">
             <img src="mappe_bioclimatiche_huglin_winkler_era5.png" alt="Mappe Bioclimatiche ERA5">
