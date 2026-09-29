@@ -94,7 +94,7 @@
             transition: opacity 0.2s ease-in-out;
         }
 
-        /* STILI PER I CONTROLLI DI SCORRIMENTO MAPPE ENSEMBLE */
+        /* STILI PER I CONTROLLI DI SCORRIMENTO MAPPE */
         .controls-ensemble {
             display: flex;
             align-items: center;
@@ -197,21 +197,17 @@
         <button class="tab-btn" onclick="openTab(event, 'clima')">6. Agro-Climatologia ERA5</button>
     </div>
 
-    <!-- SEZIONE 1: ENSEMBLE (CON VISUALIZZATORE SCORREVOLE) -->
+    <!-- SEZIONE 1: ENSEMBLE -->
     <div id="ens" class="content-section active">
         <div class="map-wrapper">
-            
-            <!-- Controlli del Visualizzatore -->
             <div class="controls-ensemble">
                 <button class="btn-nav" onclick="cambiaMappaEnsemble(-1)" title="Precedente">&lt;</button>
                 <div id="label-ensemble" class="label-display">Accumulo 01 - 24 ore</div>
                 <button class="btn-nav" onclick="cambiaMappaEnsemble(1)" title="Successiva">&gt;</button>
             </div>
 
-            <!-- Immagine Mappa Ensemble -->
             <img id="img-ensemble" src="mappa_ensemble_intervallo_24h.png" alt="Mappa Multi-Model Ensemble">
 
-            <!-- Selettore Rapido a Pulsanti -->
             <div class="quick-select">
                 <span class="dot active" onclick="impostaMappaEnsemble(0)">01-24h</span>
                 <span class="dot" onclick="impostaMappaEnsemble(1)">25-48h</span>
@@ -228,10 +224,23 @@
     <!-- SEZIONE 2: DETERMINISTICO -->
     <div id="det" class="content-section">
         <div class="map-wrapper">
-            <img src="mappa_intervallo_1_24h.png" alt="Mappa Multi-Model Deterministico">
+            <div class="controls-ensemble">
+                <button class="btn-nav" onclick="cambiaMappaDeterministico(-1)" title="Precedente">&lt;</button>
+                <div id="label-deterministico" class="label-display">Accumulo 01 - 24 ore</div>
+                <button class="btn-nav" onclick="cambiaMappaDeterministico(1)" title="Successiva">&gt;</button>
+            </div>
+
+            <img id="img-deterministico" src="mappa_deterministico_24h.png" alt="Mappa Multi-Model Deterministico">
+
+            <div class="quick-select">
+                <span class="dot active" onclick="impostaMappaDeterministico(0)">01-24h</span>
+                <span class="dot" onclick="impostaMappaDeterministico(1)">25-48h</span>
+                <span class="dot" onclick="impostaMappaDeterministico(2)">49-72h</span>
+            </div>
+
             <div class="map-info">
                 <h3>Multi-Model Deterministico Ad Alta Risoluzione</h3>
-                <p>Combinazione dei principali modelli deterministici: <strong>60% ECMWF IFS</strong> e <strong>40% GFS</strong>.</p>
+                <p>Combinazione dei principali modelli deterministici: <strong>50% ECMWF IFS</strong>, <strong>25% GFS</strong> e <strong>25% ICON</strong>.</p>
             </div>
         </div>
     </div>
@@ -350,14 +359,65 @@
         aggiornaMappaEnsemble();
     }
 
-    // Navigazione da tastiera quando si è sulla tab Ensemble
+    // 3. Gestione Scorrimento Mappe Deterministico (Tab 2)
+    const mappeDeterministico = [
+        { src: 'mappa_deterministico_24h.png', label: 'Accumulo 01 - 24 ore' },
+        { src: 'mappa_deterministico_48h.png', label: 'Accumulo 25 - 48 ore' },
+        { src: 'mappa_deterministico_72h.png', label: 'Accumulo 49 - 72 ore' }
+    ];
+
+    let indiceDeterministico = 0;
+
+    function aggiornaMappaDeterministico() {
+        const imgElement = document.getElementById('img-deterministico');
+        const labelElement = document.getElementById('label-deterministico');
+        const dots = document.querySelectorAll('#det .dot');
+
+        imgElement.style.opacity = '0.3';
+
+        setTimeout(() => {
+            const timestamp = new Date().getTime();
+            imgElement.src = mappeDeterministico[indiceDeterministico].src + '?v=' + timestamp;
+            labelElement.innerText = mappeDeterministico[indiceDeterministico].label;
+            imgElement.style.opacity = '1';
+        }, 150);
+
+        dots.forEach((dot, idx) => {
+            if (idx === indiceDeterministico) {
+                dot.classList.add('active');
+            } else {
+                dot.classList.remove('active');
+            }
+        });
+    }
+
+    function cambiaMappaDeterministico(direzione) {
+        indiceDeterministico += direzione;
+
+        if (indiceDeterministico < 0) {
+            indiceDeterministico = mappeDeterministico.length - 1;
+        } else if (indiceDeterministico >= mappeDeterministico.length) {
+            indiceDeterministico = 0;
+        }
+
+        aggiornaMappaDeterministico();
+    }
+
+    function impostaMappaDeterministico(index) {
+        indiceDeterministico = index;
+        aggiornaMappaDeterministico();
+    }
+
+    // Navigazione da tastiera generica basata sulla Tab attiva
     document.addEventListener('keydown', function(e) {
         const activeTab = document.querySelector('.content-section.active');
-        if (activeTab && activeTab.id === 'ens') {
-            if (e.key === "ArrowLeft") {
-                cambiaMappaEnsemble(-1);
-            } else if (e.key === "ArrowRight") {
-                cambiaMappaEnsemble(1);
+        if (activeTab) {
+            if (activeTab.id === 'ens') {
+                if (e.key === "ArrowLeft") cambiaMappaEnsemble(-1);
+                if (e.key === "ArrowRight") cambiaMappaEnsemble(1);
+            } else if (activeTab.id === 'det') {
+                if (e.key === "ArrowLeft") cambiaMappaDeterministico(-1);
+                if (e.key === "ArrowRight") cambiaMappaDeterministico(1);
             }
         }
     });
