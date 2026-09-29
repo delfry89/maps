@@ -9,7 +9,7 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from herbie import Herbie
 import matplotlib.colors as mcolors
-import matplotlib.pyplot as plt
+import matplotlib.plt as plt
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -29,10 +29,6 @@ w_ecm = 0.50   # 50% ECMWF Ensemble Mean
 w_gefs = 0.25  # 25% GEFS Mean
 w_icon = 0.25  # 25% ICON-EPS Mean
 
-ore_target = 24        # Scadenza finale (es. 24, 48, 72)
-finestra_ore = 24      # Ampiezza intervallo in ore
-ore_start = max(0, ore_target - finestra_ore)
-
 # Run automatico 00:00 UTC di oggi
 run_date_dt = pd.Timestamp.now(tz='UTC').floor('D')
 run_date = run_date_dt.strftime('%Y-%m-%d 00:00')
@@ -44,6 +40,13 @@ lat_min, lat_max = 35.5, 47.5
 
 grid_lon = np.linspace(lon_min, lon_max, 350)
 grid_lat = np.linspace(lat_min, lat_max, 350)
+
+# DEFINIZIONE DELLE FINESTRE TEMPORALI TARGET
+intervalli = [
+    {"ore_start": 0,  "ore_target": 24, "label": "01 - 24 ore"},
+    {"ore_start": 24, "ore_target": 48, "label": "25 - 48 ore"},
+    {"ore_start": 48, "ore_target": 72, "label": "49 - 72 ore"}
+]
 
 
 # =========================================================
@@ -152,7 +155,6 @@ def fetch_ensemble_data(fxx):
             print(f"      ✅ ICON-EPS (+{fxx}h) caricato via DWD OpenData")
         except Exception as e:
             print(f"      ⚠️ Errore ICON-EPS DWD (+{fxx}h): {e}")
-            # Se ICON fallisce del tutto, media fallback tra ECMWF e GEFS
             if 'ECMWF' in models_out and 'GEFS' in models_out:
                 models_out['ICON'] = (models_out['ECMWF'] + models_out['GEFS']) / 2.0
             elif 'ECMWF' in models_out:
@@ -169,43 +171,25 @@ def fetch_ensemble_data(fxx):
 
 
 # =========================================================
-# 3. RUN DELLE ELABORAZIONI E SOTTRAZIONE INTERVALLO
+# 3. DOWNLOAD PREVENTIVO DEI TARGETS
 # =========================================================
-print(f"--- ENSEMBLE MULTI-MODEL | Run {run_date} UTC | Calcolo Intervallo: +{ore_start+1}h -> +{ore_target}h ---")
+print(f"--- ENSEMBLE MULTI-MODEL | Run {run_date} UTC ---")
 
-print(f"1/2 Scarico dati Ensemble per +{ore_target}h...")
-data_target = fetch_ensemble_data(ore_target)
+# Troviamo tutte le scadenze necessarie senza duplicati (es. 0, 24, 48, 72)
+ore_da_scaricare = sorted(list(set([i["ore_start"] for i in intervalli] + [i["ore_target"] for i in intervalli])))
+all_data = {}
 
-if ore_start > 0:
-    print(f"2/2 Scarico dati Ensemble per +{ore_start}h (per sottrarre)...")
-    data_start = fetch_ensemble_data(ore_start)
-else:
-    data_start = {m: np.zeros((350, 350)) for m in data_target}
+for fxx in ore_da_scaricare:
+    if fxx == 0:
+        # A +0h l'accumulo è pari a zero
+        all_data[0] = {m: np.zeros((350, 350)) for m in ['ECMWF', 'GEFS', 'ICON']}
+    else:
+        print(f"\nScaricamento dati per la scadenza cumulata +{fxx}h...")
+        all_data[fxx] = fetch_ensemble_data(fxx)
 
-# Calcolo differenza netta nell'intervallo
-models_interval = {}
-weights_map = {'ECMWF': w_ecm, 'GEFS': w_gefs, 'ICON': w_icon}
-active_weights = {}
-
-for m in data_target:
-    if m in data_start:
-        diff = data_target[m] - data_start[m]
-        models_interval[m] = np.clip(diff, 0, None)
-        if m in weights_map:
-            active_weights[m] = weights_map[m]
-
-if not models_interval:
-    raise RuntimeError("Impossibile scaricare o calcolare l'intervallo ensemble per alcun modello.")
-
-tot_w = sum(active_weights.values())
-norm_w = {m: active_weights[m] / tot_w for m in active_weights}
-
-precip_weighted_ens = sum(norm_w[m] * models_interval[m] for m in models_interval)
-info_pesi_str = [f"{m}-ENS ({int(norm_w[m] * 100)}%)" for m in models_interval]
-title_pesi = ' | '.join(info_pesi_str)
 
 # =========================================================
-# 4. LEGENDA COLORI E GRAFICA
+# 4. LEGENDA COLORI E GRAFICA COMMODITY
 # =========================================================
 levels = [0, 0.2, 1, 3, 5, 8, 10, 15, 25, 40, 60, 100, 150]
 colors = [
@@ -216,57 +200,94 @@ colors = [
 cmap = mcolors.ListedColormap(colors)
 norm = mcolors.BoundaryNorm(levels, cmap.N)
 
-# =========================================================
-# 5. TRACCIAMENTO MAPPA
-# =========================================================
-fig = plt.figure(figsize=(11, 11), dpi=120)
-ax = plt.axes(projection=ccrs.PlateCarree())
-ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
-
-ax.add_feature(cfeature.COASTLINE.with_scale('10m'), linewidth=0.8)
-ax.add_feature(cfeature.BORDERS.with_scale('10m'), linewidth=0.8)
-ax.add_feature(cfeature.LAKES.with_scale('10m'), facecolor='none', edgecolor='black', linewidth=0.3)
-
 region_boundaries = cfeature.NaturalEarthFeature(
     category='cultural',
     name='admin_1_states_provinces_lines',
     scale='10m',
     facecolor='none'
 )
-ax.add_feature(region_boundaries, edgecolor='gray', linewidth=0.5, linestyle=':')
 
-lon_grid, lat_grid = np.meshgrid(grid_lon, grid_lat)
 
-cf = ax.contourf(
-    lon_grid, lat_grid, precip_weighted_ens,
-    levels=levels, cmap=cmap, norm=norm, extend='max',
-    transform=ccrs.PlateCarree()
-)
+# =========================================================
+# 5. GENERAZIONE MAPPE PER I 3 INTERVALLI
+# =========================================================
+for item in intervalli:
+    start_h = item["ore_start"]
+    target_h = item["ore_target"]
+    label_time = item["label"]
+    
+    print(f"\nElaborazione Mappa Intervallo +{start_h+1}h ➔ +{target_h}h ({label_time})...")
 
-cbar = plt.colorbar(
-    cf, ax=ax, orientation='horizontal', pad=0.05, shrink=0.85,
-    ticks=levels, aspect=30
-)
-cbar.set_label(
-    f"Precipitazione Media d'Ensemble Nelle 24h (+{ore_start+1}h ➔ +{ore_target}h) [mm]",
-    fontsize=10, fontweight='bold'
-)
-cbar.ax.tick_params(labelsize=8)
+    data_start = all_data[start_h]
+    data_target = all_data[target_h]
 
-plt.title(
-    f"MULTI-MODEL ENSEMBLE MEAN (ECMWF-ENS / GEFS / ICON-EPS) - ITALIA\n"
-    f"Cumulata Intervallo: +{ore_start+1}h ➔ +{ore_target}h | Run: {run_date} UTC\nPesi: {title_pesi}",
-    fontsize=10, fontweight='bold', pad=12
-)
+    models_interval = {}
+    weights_map = {'ECMWF': w_ecm, 'GEFS': w_gefs, 'ICON': w_icon}
+    active_weights = {}
 
-ax.text(
-    0.99, 0.01, 'Elab. & grafica Delfry', transform=ax.transAxes,
-    fontsize=8, fontweight='bold', color='#333333', ha='right', va='bottom',
-    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.75, edgecolor='none')
-)
+    # Sottrarre il valore di inizio intervallo per ottenere la cumulata netta
+    for m in data_target:
+        if m in data_start:
+            diff = data_target[m] - data_start[m]
+            models_interval[m] = np.clip(diff, 0, None)
+            if m in weights_map:
+                active_weights[m] = weights_map[m]
 
-output_image_path = f'mappa_ensemble_intervallo_{ore_start+1}_{ore_target}h.png'
-plt.savefig(output_image_path, bbox_inches='tight', dpi=150)
-plt.close()
+    if not models_interval:
+        print(f"⚠️ Dati insufficienti per calcolare l'intervallo {label_time}, salto...")
+        continue
 
-print(f"🖼️ Mappa Ensemble salvata con successo come: {output_image_path}")
+    tot_w = sum(active_weights.values())
+    norm_w = {m: active_weights[m] / tot_w for m in active_weights}
+
+    precip_weighted_ens = sum(norm_w[m] * models_interval[m] for m in models_interval)
+    info_pesi_str = [f"{m}-ENS ({int(norm_w[m] * 100)}%)" for m in models_interval]
+    title_pesi = ' | '.join(info_pesi_str)
+
+    # TRACCIAMENTO MAPPA
+    fig = plt.figure(figsize=(11, 11), dpi=120)
+    ax = plt.axes(projection=ccrs.PlateCarree())
+    ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
+
+    ax.add_feature(cfeature.COASTLINE.with_scale('10m'), linewidth=0.8)
+    ax.add_feature(cfeature.BORDERS.with_scale('10m'), linewidth=0.8)
+    ax.add_feature(cfeature.LAKES.with_scale('10m'), facecolor='none', edgecolor='black', linewidth=0.3)
+    ax.add_feature(region_boundaries, edgecolor='gray', linewidth=0.5, linestyle=':')
+
+    lon_grid, lat_grid = np.meshgrid(grid_lon, grid_lat)
+
+    cf = ax.contourf(
+        lon_grid, lat_grid, precip_weighted_ens,
+        levels=levels, cmap=cmap, norm=norm, extend='max',
+        transform=ccrs.PlateCarree()
+    )
+
+    cbar = plt.colorbar(
+        cf, ax=ax, orientation='horizontal', pad=0.05, shrink=0.85,
+        ticks=levels, aspect=30
+    )
+    cbar.set_label(
+        f"Precipitazione Media d'Ensemble ({label_time}) [mm]",
+        fontsize=10, fontweight='bold'
+    )
+    cbar.ax.tick_params(labelsize=8)
+
+    plt.title(
+        f"MULTI-MODEL ENSEMBLE MEAN (ECMWF-ENS / GEFS / ICON-EPS) - ITALIA\n"
+        f"Cumulata Intervallo: +{start_h+1}h ➔ +{target_h}h | Run: {run_date} UTC\nPesi: {title_pesi}",
+        fontsize=10, fontweight='bold', pad=12
+    )
+
+    ax.text(
+        0.99, 0.01, 'Elab. & grafica Delfry', transform=ax.transAxes,
+        fontsize=8, fontweight='bold', color='#333333', ha='right', va='bottom',
+        bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.75, edgecolor='none')
+    )
+
+    output_image_path = f'mappa_ensemble_intervallo_{target_h}h.png'
+    plt.savefig(output_image_path, bbox_inches='tight', dpi=150)
+    plt.close()
+
+    print(f"🖼️ Mappa salvata con successo come: {output_image_path}")
+
+print("\n🎉 Elaborazione completata! Salvate le 3 mappe ensemble per 24h, 48h e 72h.")
