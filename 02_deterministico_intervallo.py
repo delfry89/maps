@@ -25,9 +25,14 @@ peso_ECMWF = 0.50
 peso_GFS = 0.25
 peso_ICON = 0.25
 
-ore_target = 24       # Scadenza finale (es. 24, 48, 72)
-finestra_ore = 24     # Ampiezza intervallo in ore
-ore_start = max(0, ore_target - finestra_ore)
+# Definiamo i 3 intervalli target a 24h, 48h e 72h
+intervalli = [
+    {'target': 24, 'filename': 'mappa_deterministico_24h.png', 'label': '01 - 24 ore'},
+    {'target': 48, 'filename': 'mappa_deterministico_48h.png', 'label': '25 - 48 ore'},
+    {'target': 72, 'filename': 'mappa_deterministico_72h.png', 'label': '49 - 72 ore'}
+]
+
+finestra_ore = 24  # Ampiezza intervallo in ore
 
 # Run automatico 00:00 UTC di oggi
 run_date_dt = pd.Timestamp.now(tz='UTC').floor('D')
@@ -138,65 +143,83 @@ def fetch_models(fxx):
     return data
 
 
-# =========================================================
-# 2. DOWNLOAD E SOTTRAZIONE INTERVALLO
-# =========================================================
-print(f"--- RUN {run_date} UTC | Calcolo Intervallo: +{ore_start+1}h -> +{ore_target}h ---")
+# Cache per evitare di riscaricare le stesse scadenze
+data_cache = {}
 
-data_target = fetch_models(ore_target)
-data_start = fetch_models(ore_start) if ore_start > 0 else {m: np.zeros((350, 350)) for m in data_target}
+def get_cached_models(fxx):
+    if fxx not in data_cache:
+        data_cache[fxx] = fetch_models(fxx)
+    return data_cache[fxx]
 
-models_interval_data = {}
-weights_map = {'ECMWF': peso_ECMWF, 'GFS': peso_GFS, 'ICON': peso_ICON}
-active_weights = {}
-
-for m in data_target:
-    if m in data_start:
-        models_interval_data[m] = np.clip(data_target[m] - data_start[m], 0, None)
-        if m in weights_map:
-            active_weights[m] = weights_map[m]
-
-if not models_interval_data:
-    raise RuntimeError("Impossibile scaricare o calcolare l'intervallo per nessun modello.")
 
 # =========================================================
-# 3. PONDERAZIONE MULTI-MODEL
+# 2. CICLO SUI 3 INTERVALLI TEMPORALI
 # =========================================================
-tot_w = sum(active_weights.values())
-precip_weighted = sum((active_weights[m] / tot_w) * models_interval_data[m] for m in models_interval_data)
+print(f"=== INIZIO ELABORAZIONE DETERMINISTICO - RUN {run_date} UTC ===")
 
-info_pesi = [f"{m} ({int((active_weights[m]/tot_w)*100)}%)" for m in models_interval_data]
-title_pesi = " | ".join(info_pesi)
+for step in intervalli:
+    ore_target = step['target']
+    ore_start = max(0, ore_target - finestra_ore)
+    
+    print(f"\n--- Elaborazione Intervallo: +{ore_start+1}h -> +{ore_target}h ---")
 
-# =========================================================
-# 4. ELABORAZIONE GRAFICA
-# =========================================================
-levels = [0, 0.2, 1, 3, 5, 8, 10, 15, 25, 40, 60, 100, 150]
-colors = ['#ffffff', '#e0f7fa', '#80deea', '#29b6f6', '#0288d1', '#1565c0', '#00c832', '#ffff00', '#ff9600', '#ff0000', '#c80032', '#a00064']
-cmap = mcolors.ListedColormap(colors)
-norm = mcolors.BoundaryNorm(levels, cmap.N)
+    data_target = get_cached_models(ore_target)
+    data_start = get_cached_models(ore_start) if ore_start > 0 else {m: np.zeros((350, 350)) for m in data_target}
 
-fig = plt.figure(figsize=(11, 11), dpi=120)
-ax = plt.axes(projection=ccrs.PlateCarree())
-ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
+    models_interval_data = {}
+    weights_map = {'ECMWF': peso_ECMWF, 'GFS': peso_GFS, 'ICON': peso_ICON}
+    active_weights = {}
 
-ax.add_feature(cfeature.COASTLINE.with_scale('10m'), linewidth=0.8)
-ax.add_feature(cfeature.BORDERS.with_scale('10m'), linewidth=0.8)
-ax.add_feature(cfeature.LAKES.with_scale('10m'), facecolor='none', edgecolor='black', linewidth=0.3)
-ax.add_feature(cfeature.NaturalEarthFeature('cultural', 'admin_1_states_provinces_lines', '10m', facecolor='none'), edgecolor='gray', linewidth=0.5, linestyle=':')
+    for m in data_target:
+        if m in data_start:
+            models_interval_data[m] = np.clip(data_target[m] - data_start[m], 0, None)
+            if m in weights_map:
+                active_weights[m] = weights_map[m]
 
-lon_grid, lat_grid = np.meshgrid(grid_lon, grid_lat)
-cf = ax.contourf(lon_grid, lat_grid, precip_weighted, levels=levels, cmap=cmap, norm=norm, extend='max', transform=ccrs.PlateCarree())
+    if not models_interval_data:
+        print(f"⚠️ Impossibile calcolare l'intervallo +{ore_start+1}h->+{ore_target}h. Salto.")
+        continue
 
-cbar = plt.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, shrink=0.85, ticks=levels, aspect=30)
-cbar.set_label(f'Precipitazione Cumulata 24h (+{ore_start+1}h ➔ +{ore_target}h) [mm]', fontsize=10, fontweight='bold')
-cbar.ax.tick_params(labelsize=8)
+    # =========================================================
+    # 3. PONDERAZIONE MULTI-MODEL
+    # =========================================================
+    tot_w = sum(active_weights.values())
+    precip_weighted = sum((active_weights[m] / tot_w) * models_interval_data[m] for m in models_interval_data)
 
-plt.title(f'MULTI-MODEL DETERMINISTICO - ITALIA\nRun: {run_date} UTC | Pesi: {title_pesi}', fontsize=10, fontweight='bold', pad=12)
-ax.text(0.99, 0.01, 'Elab. & grafica Delfry', transform=ax.transAxes, fontsize=8, fontweight='bold', color='black', ha='right', va='bottom', bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7, edgecolor='none'))
+    info_pesi = [f"{m} ({int((active_weights[m]/tot_w)*100)}%)" for m in models_interval_data]
+    title_pesi = " | ".join(info_pesi)
 
-output_path = f'mappa_intervallo_{ore_start+1}_{ore_target}h.png'
-plt.savefig(output_path, bbox_inches='tight', dpi=150)
-plt.close()
+    # =========================================================
+    # 4. ELABORAZIONE GRAFICA
+    # =========================================================
+    levels = [0, 0.2, 1, 3, 5, 8, 10, 15, 25, 40, 60, 100, 150]
+    colors = ['#ffffff', '#e0f7fa', '#80deea', '#29b6f6', '#0288d1', '#1565c0', '#00c832', '#ffff00', '#ff9600', '#ff0000', '#c80032', '#a00064']
+    cmap = mcolors.ListedColormap(colors)
+    norm = mcolors.BoundaryNorm(levels, cmap.N)
 
-print(f"🖼️ Mappa salvata con successo come: {output_path}")
+    fig = plt.figure(figsize=(11, 11), dpi=120)
+    ax = plt.axes(projection=ccrs.PlateCarree())
+    ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
+
+    ax.add_feature(cfeature.COASTLINE.with_scale('10m'), linewidth=0.8)
+    ax.add_feature(cfeature.BORDERS.with_scale('10m'), linewidth=0.8)
+    ax.add_feature(cfeature.LAKES.with_scale('10m'), facecolor='none', edgecolor='black', linewidth=0.3)
+    ax.add_feature(cfeature.NaturalEarthFeature('cultural', 'admin_1_states_provinces_lines', '10m', facecolor='none'), edgecolor='gray', linewidth=0.5, linestyle=':')
+
+    lon_grid, lat_grid = np.meshgrid(grid_lon, grid_lat)
+    cf = ax.contourf(lon_grid, lat_grid, precip_weighted, levels=levels, cmap=cmap, norm=norm, extend='max', transform=ccrs.PlateCarree())
+
+    cbar = plt.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, shrink=0.85, ticks=levels, aspect=30)
+    cbar.set_label(f'Precipitazione Cumulata 24h (+{ore_start+1}h ➔ +{ore_target}h) [mm]', fontsize=10, fontweight='bold')
+    cbar.ax.tick_params(labelsize=8)
+
+    plt.title(f'MULTI-MODEL DETERMINISTICO - ITALIA\nRun: {run_date} UTC | Pesi: {title_pesi}', fontsize=10, fontweight='bold', pad=12)
+    ax.text(0.99, 0.01, 'Elab. & grafica Delfry', transform=ax.transAxes, fontsize=8, fontweight='bold', color='black', ha='right', va='bottom', bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7, edgecolor='none'))
+
+    output_path = step['filename']
+    plt.savefig(output_path, bbox_inches='tight', dpi=150)
+    plt.close()
+
+    print(f"🖼️ Mappa salvata con successo: {output_path}")
+
+print("\n🎉 Elaborazione completata per tutti gli intervalli!")
