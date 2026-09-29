@@ -41,6 +41,8 @@ jobs:
           python 02_deterministico_intervallo.py
           python 03_agrometeo_24h.py
           python 04_bioclimatologia_era5.py
+          python 05_rischio_fitosanitario.py
+          python 06_bilancio_idrico.py
 
       - name: Commit and push updated maps
         run: |
