@@ -1,38 +1,61 @@
+import bz2
+from datetime import datetime
 import os
+import tempfile
+import urllib.request
 import warnings
-import matplotlib
-matplotlib.use('Agg')
 
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-import numpy as np
-import pandas as pd
-import xarray as xr
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from herbie import Herbie
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import xarray as xr
 
+# =========================================================
+# GESTIONE WARNING E OPZIONI XARRAY
+# =========================================================
 xr.set_options(use_new_combine_kwarg_defaults=True)
+warnings.filterwarnings('ignore', category=FutureWarning, module='cfgrib')
+warnings.filterwarnings('ignore', category=FutureWarning, module='xarray')
 warnings.filterwarnings('ignore')
 
-w_ecm, w_gefs, w_icon = 0.50, 0.25, 0.25
-ore_target, finestra_ore = 24, 24
+# =========================================================
+# 1. CONFIGURAZIONE PARAMETRI E PESI ENSEMBLE
+# =========================================================
+w_ecm = 0.50   # 50% ECMWF Ensemble Mean
+w_gefs = 0.25  # 25% GEFS Mean
+w_icon = 0.25  # 25% ICON-EPS Mean
+
+ore_target = 24        # Scadenza finale (es. 24, 48, 72)
+finestra_ore = 24      # Ampiezza intervallo in ore
 ore_start = max(0, ore_target - finestra_ore)
 
+# Run automatico 00:00 UTC di oggi
 run_date_dt = pd.Timestamp.now(tz='UTC').floor('D')
 run_date = run_date_dt.strftime('%Y-%m-%d 00:00')
 date_str_dwd = run_date_dt.strftime('%Y%m%d00')
 
+# Dominio Italia
 lon_min, lon_max = 6.0, 19.0
 lat_min, lat_max = 35.5, 47.5
+
 grid_lon = np.linspace(lon_min, lon_max, 350)
 grid_lat = np.linspace(lat_min, lat_max, 350)
 
+
+# =========================================================
+# FUNZIONI DI UTILITÀ
+# =========================================================
 def get_precip_var(ds):
     for var in ['tp', 'apcp', 'precip', 'APCP', 'tot_prec', 'TOT_PREC', 'unknown', 'tp_acc']:
         if var in ds.data_vars:
             return ds[var]
-    return ds[list(ds.data_vars.keys())[0]]
+    keys = list(ds.data_vars.keys())
+    return ds[keys[0]]
+
 
 def standardize_coords(da):
     rename_dict = {}
@@ -43,72 +66,207 @@ def standardize_coords(da):
             rename_dict[col] = 'latitude'
     if rename_dict:
         da = da.rename(rename_dict)
+
     if 'longitude' in da.coords and (da.longitude.values > 180).any():
         da = da.assign_coords(longitude=(((da.longitude + 180) % 360) - 180)).sortby('longitude')
+
     return da
 
-def fetch_ensemble_data(fxx):
-    models_out = {}
-    try:
-        H_ecm = Herbie(date=run_date, fxx=fxx, model='ifs', product='enfo', member='mean')
-        ds_ecm = H_ecm.xarray('tp')
-        tp_ecm = standardize_coords(get_precip_var(ds_ecm))
-        if 'number' in tp_ecm.dims: tp_ecm = tp_ecm.mean(dim='number')
-        if tp_ecm.max() < 2.0: tp_ecm *= 1000.0
-        ecm_interp = tp_ecm.interp(longitude=grid_lon, latitude=grid_lat, method='linear')
-        models_out['ECMWF'] = np.clip(np.nan_to_num(ecm_interp.values, nan=0.0), 0, None)
-    except Exception as e:
-        print(f"Error ECMWF: {e}")
 
+# =========================================================
+# 2. FUNZIONE SCARICO E INTERPOLAZIONE MODELLI ENSEMBLE
+# =========================================================
+def fetch_ensemble_data(fxx):
+    print(f"   -> Download dati Ensemble per la scadenza +{fxx}h...")
+    models_out = {}
+
+    # --- A. ECMWF-ENS (IFS Ensemble Mean) ---
+    try:
+        H_ecm_ens = Herbie(date=run_date, fxx=fxx, model='ifs', product='enfo', member='mean')
+        ds_ecm_ens = H_ecm_ens.xarray('tp')
+        tp_ecm_ens = get_precip_var(ds_ecm_ens)
+        if 'number' in tp_ecm_ens.dims:
+            tp_ecm_ens = tp_ecm_ens.mean(dim='number')
+        if tp_ecm_ens.max() < 2.0:
+            tp_ecm_ens = tp_ecm_ens * 1000.0  # converti da metri a mm
+        tp_ecm_ens = standardize_coords(tp_ecm_ens)
+        ecm_interp = tp_ecm_ens.interp(longitude=grid_lon, latitude=grid_lat, method='linear')
+        models_out['ECMWF'] = np.clip(np.nan_to_num(ecm_interp.values, nan=0.0), 0, None)
+        print(f"      ✅ ECMWF-ENS (+{fxx}h) caricato con successo")
+    except Exception as e:
+        print(f"      ⚠️ Errore ECMWF-ENS (+{fxx}h): {e}")
+
+    # --- B. GEFS (GFS Ensemble Mean) ---
     try:
         H_gefs = Herbie(date=run_date, fxx=fxx, model='gefs', product='atmos.25', member='mean')
         ds_gefs = H_gefs.xarray('APCP')
-        tp_gefs = standardize_coords(get_precip_var(ds_gefs))
-        if 'number' in tp_gefs.dims: tp_gefs = tp_gefs.mean(dim='number')
+        tp_gefs = get_precip_var(ds_gefs)
+        if 'number' in tp_gefs.dims:
+            tp_gefs = tp_gefs.mean(dim='number')
+        tp_gefs = standardize_coords(tp_gefs)
         gefs_interp = tp_gefs.interp(longitude=grid_lon, latitude=grid_lat, method='linear')
         models_out['GEFS'] = np.clip(np.nan_to_num(gefs_interp.values, nan=0.0), 0, None)
+        print(f"      ✅ GEFS (+{fxx}h) caricato con successo")
     except Exception as e:
-        print(f"Error GEFS: {e}")
+        print(f"      ⚠️ Errore GEFS (+{fxx}h): {e}")
+
+    # --- C. ICON-EPS ---
+    icon_loaded = False
+    try:
+        H_icon_eps = Herbie(date=run_date, fxx=fxx, model='icon', product='ens-global')
+        ds_icon_eps = H_icon_eps.xarray('TOT_PREC')
+        tp_icon_eps = get_precip_var(ds_icon_eps)
+        if 'number' in tp_icon_eps.dims:
+            tp_icon_eps = tp_icon_eps.mean(dim='number')
+        tp_icon_eps = standardize_coords(tp_icon_eps)
+        icon_interp = tp_icon_eps.interp(longitude=grid_lon, latitude=grid_lat, method='linear')
+        models_out['ICON'] = np.clip(np.nan_to_num(icon_interp.values, nan=0.0), 0, None)
+        icon_loaded = True
+        print(f"      ✅ ICON-EPS (+{fxx}h) caricato via Herbie")
+    except Exception:
+        pass
+
+    # Fallback su DWD OpenData se Herbie non recupera ICON-EPS
+    if not icon_loaded:
+        fxx_str = f"{fxx:03d}"
+        filename_bz2 = f"icon-eu-eps_europe_regular-lat-lon_single-level_{date_str_dwd}_{fxx_str}_TOT_PREC.grib2.bz2"
+        icon_url = f"https://opendata.dwd.de/weather/nwp/icon-eu-eps/grib/00/tot_prec/{filename_bz2}"
+
+        tmp_bz2 = os.path.join(tempfile.gettempdir(), f"icon_eps_{fxx}h.grib2.bz2")
+        tmp_grib = os.path.join(tempfile.gettempdir(), f"icon_eps_{fxx}h.grib2")
+
+        try:
+            urllib.request.urlretrieve(icon_url, tmp_bz2)
+            with bz2.open(tmp_bz2, 'rb') as f_in:
+                with open(tmp_grib, 'wb') as f_out:
+                    f_out.write(f_in.read())
+
+            ds_icon = xr.open_dataset(tmp_grib, engine='cfgrib', backend_kwargs={'filter_by_keys': {}})
+            tp_icon = get_precip_var(ds_icon)
+            if 'number' in tp_icon.dims:
+                tp_icon = tp_icon.mean(dim='number')
+            tp_icon = standardize_coords(tp_icon)
+            icon_interp = tp_icon.interp(longitude=grid_lon, latitude=grid_lat, method='linear')
+            models_out['ICON'] = np.clip(np.nan_to_num(icon_interp.values, nan=0.0), 0, None)
+            icon_loaded = True
+            print(f"      ✅ ICON-EPS (+{fxx}h) caricato via DWD OpenData")
+        except Exception as e:
+            print(f"      ⚠️ Errore ICON-EPS DWD (+{fxx}h): {e}")
+            # Se ICON fallisce del tutto, media fallback tra ECMWF e GEFS
+            if 'ECMWF' in models_out and 'GEFS' in models_out:
+                models_out['ICON'] = (models_out['ECMWF'] + models_out['GEFS']) / 2.0
+            elif 'ECMWF' in models_out:
+                models_out['ICON'] = models_out['ECMWF']
+        finally:
+            for f in [tmp_bz2, tmp_grib]:
+                if os.path.exists(f):
+                    try:
+                        os.remove(f)
+                    except OSError:
+                        pass
 
     return models_out
 
-data_target = fetch_ensemble_data(ore_target)
-data_start = fetch_ensemble_data(ore_start) if ore_start > 0 else {m: np.zeros((350, 350)) for m in data_target}
 
+# =========================================================
+# 3. RUN DELLE ELABORAZIONI E SOTTRAZIONE INTERVALLO
+# =========================================================
+print(f"--- ENSEMBLE MULTI-MODEL | Run {run_date} UTC | Calcolo Intervallo: +{ore_start+1}h -> +{ore_target}h ---")
+
+print(f"1/2 Scarico dati Ensemble per +{ore_target}h...")
+data_target = fetch_ensemble_data(ore_target)
+
+if ore_start > 0:
+    print(f"2/2 Scarico dati Ensemble per +{ore_start}h (per sottrarre)...")
+    data_start = fetch_ensemble_data(ore_start)
+else:
+    data_start = {m: np.zeros((350, 350)) for m in data_target}
+
+# Calcolo differenza netta nell'intervallo
 models_interval = {}
+weights_map = {'ECMWF': w_ecm, 'GEFS': w_gefs, 'ICON': w_icon}
 active_weights = {}
 
 for m in data_target:
     if m in data_start:
-        models_interval[m] = np.clip(data_target[m] - data_start[m], 0, None)
-        active_weights[m] = w_ecm if m == 'ECMWF' else w_gefs
+        diff = data_target[m] - data_start[m]
+        models_interval[m] = np.clip(diff, 0, None)
+        if m in weights_map:
+            active_weights[m] = weights_map[m]
 
-if active_weights:
-    tot_w = sum(active_weights.values())
-    norm_w = {m: active_weights[m]/tot_w for m in active_weights}
-    precip_weighted_ens = sum(norm_w[m] * models_interval[m] for m in models_interval)
+if not models_interval:
+    raise RuntimeError("Impossibile scaricare o calcolare l'intervallo ensemble per alcun modello.")
 
-    levels = [0, 0.2, 1, 3, 5, 8, 10, 15, 25, 40, 60, 100, 150]
-    colors = ['#ffffff', '#e0f7fa', '#80deea', '#29b6f6', '#0288d1', '#1565c0', '#00c832', '#ffff00', '#ff9600', '#ff0000', '#c80032', '#a00064']
-    cmap = mcolors.ListedColormap(colors)
-    norm = mcolors.BoundaryNorm(levels, cmap.N)
+tot_w = sum(active_weights.values())
+norm_w = {m: active_weights[m] / tot_w for m in active_weights}
 
-    fig = plt.figure(figsize=(11, 11), dpi=120)
-    ax = plt.axes(projection=ccrs.PlateCarree())
-    ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
+precip_weighted_ens = sum(norm_w[m] * models_interval[m] for m in models_interval)
+info_pesi_str = [f"{m}-ENS ({int(norm_w[m] * 100)}%)" for m in models_interval]
+title_pesi = ' | '.join(info_pesi_str)
 
-    ax.add_feature(cfeature.COASTLINE.with_scale('10m'), linewidth=0.8)
-    ax.add_feature(cfeature.BORDERS.with_scale('10m'), linewidth=0.8)
-    ax.add_feature(cfeature.NaturalEarthFeature('cultural', 'admin_1_states_provinces_lines', '10m', facecolor='none'), edgecolor='gray', linewidth=0.5, linestyle=':')
+# =========================================================
+# 4. LEGENDA COLORI E GRAFICA
+# =========================================================
+levels = [0, 0.2, 1, 3, 5, 8, 10, 15, 25, 40, 60, 100, 150]
+colors = [
+    '#ffffff', '#e0f7fa', '#80deea', '#29b6f6', '#0288d1', '#1565c0',
+    '#00c832', '#ffff00', '#ff9600', '#ff0000', '#c80032', '#a00064'
+]
 
-    lon_grid, lat_grid = np.meshgrid(grid_lon, grid_lat)
-    cf = ax.contourf(lon_grid, lat_grid, precip_weighted_ens, levels=levels, cmap=cmap, norm=norm, extend='max', transform=ccrs.PlateCarree())
+cmap = mcolors.ListedColormap(colors)
+norm = mcolors.BoundaryNorm(levels, cmap.N)
 
-    cbar = plt.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, shrink=0.85, ticks=levels, aspect=30)
-    cbar.set_label(f'Precipitazione Media Ensemble 24h (+{ore_start+1}h -> +{ore_target}h) [mm]', fontsize=10, fontweight='bold')
-    
-    plt.title(f'MULTI-MODEL ENSEMBLE MEAN - ITALIA\nRun: {run_date} UTC', fontsize=10, fontweight='bold', pad=12)
-    ax.text(0.99, 0.01, 'Elab. & grafica Delfry', transform=ax.transAxes, fontsize=8, fontweight='bold', color='#333333', ha='right', va='bottom', bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.75, edgecolor='none'))
+# =========================================================
+# 5. TRACCIAMENTO MAPPA
+# =========================================================
+fig = plt.figure(figsize=(11, 11), dpi=120)
+ax = plt.axes(projection=ccrs.PlateCarree())
+ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
 
-    plt.savefig(f'mappa_ensemble_intervallo_{ore_start+1}_{ore_target}h.png', bbox_inches='tight', dpi=150)
-    plt.close()
+ax.add_feature(cfeature.COASTLINE.with_scale('10m'), linewidth=0.8)
+ax.add_feature(cfeature.BORDERS.with_scale('10m'), linewidth=0.8)
+ax.add_feature(cfeature.LAKES.with_scale('10m'), facecolor='none', edgecolor='black', linewidth=0.3)
+
+region_boundaries = cfeature.NaturalEarthFeature(
+    category='cultural',
+    name='admin_1_states_provinces_lines',
+    scale='10m',
+    facecolor='none'
+)
+ax.add_feature(region_boundaries, edgecolor='gray', linewidth=0.5, linestyle=':')
+
+lon_grid, lat_grid = np.meshgrid(grid_lon, grid_lat)
+
+cf = ax.contourf(
+    lon_grid, lat_grid, precip_weighted_ens,
+    levels=levels, cmap=cmap, norm=norm, extend='max',
+    transform=ccrs.PlateCarree()
+)
+
+cbar = plt.colorbar(
+    cf, ax=ax, orientation='horizontal', pad=0.05, shrink=0.85,
+    ticks=levels, aspect=30
+)
+cbar.set_label(
+    f"Precipitazione Media d'Ensemble Nelle 24h (+{ore_start+1}h ➔ +{ore_target}h) [mm]",
+    fontsize=10, fontweight='bold'
+)
+cbar.ax.tick_params(labelsize=8)
+
+plt.title(
+    f"MULTI-MODEL ENSEMBLE MEAN (ECMWF-ENS / GEFS / ICON-EPS) - ITALIA\n"
+    f"Cumulata Intervallo: +{ore_start+1}h ➔ +{ore_target}h | Run: {run_date} UTC\nPesi: {title_pesi}",
+    fontsize=10, fontweight='bold', pad=12
+)
+
+ax.text(
+    0.99, 0.01, 'Elab. & grafica Delfry', transform=ax.transAxes,
+    fontsize=8, fontweight='bold', color='#333333', ha='right', va='bottom',
+    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.75, edgecolor='none')
+)
+
+output_image_path = f'mappa_ensemble_intervallo_{ore_start+1}_{ore_target}h.png'
+plt.savefig(output_image_path, bbox_inches='tight', dpi=150)
+plt.close()
+
+print(f"🖼️ Mappa Ensemble salvata con successo come: {output_image_path}")
