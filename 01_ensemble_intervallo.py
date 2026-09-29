@@ -9,7 +9,7 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from herbie import Herbie
 import matplotlib.colors as mcolors
-import matplotlib.plt as plt
+import matplotlib.pyplot as plt  # ✅ Corretto
 import numpy as np
 import pandas as pd
 import xarray as xr
