@@ -33,6 +33,9 @@ k_huglin = 1.0 + (lat_mean - 40) * 0.006
 now = datetime.datetime.now()
 current_year = now.year
 
+# --- CORREZIONE: Definizione di target_year ---
+target_year = current_year if now.month >= 10 else current_year - 1
+
 # Calcolo data dinamica per le mappe inferiori (progressivo a oggi)
 start_season = datetime.datetime(current_year, 4, 1)
 if now < start_season:
@@ -41,7 +44,7 @@ if now < start_season:
     stato_stagione = f"Consuntivo Stagione {current_year - 1}"
 else:
     start_date_dyn = start_season
-    end_date_dyn = now  # Arriva alla data odierna reale (es. 5 Ottobre)
+    end_date_dyn = now  # Arriva alla data odierna reale
     stato_stagione = f"Accumulo dal 01/04 al {end_date_dyn.strftime('%d/%m/%Y')}"
 
 giorni_stagione_completa = 183 # 1 Apr - 30 Set
@@ -71,7 +74,6 @@ def get_climate_data(year):
         print(f" Tentativo di richiesta dati ERA5 per {year} da Copernicus CDS...")
         try:
             import cdsapi
-            # Configura .cdsapirc al volo se ci sono le variabili di ambiente
             cds_url = os.environ.get('CDS_URL')
             cds_key = os.environ.get('CDS_KEY')
             if cds_url and cds_key:
@@ -128,15 +130,11 @@ def get_climate_data(year):
             print(f" Errore lettura xarray ({e}). Generazione modello orografico...")
 
     # FALLBACK OROGRAFICO REALISTICO (Senza cerchi né buchi, segue Appennini e Costa)
-    # Dorsale appenninica NW-SE
     ridge = 12.8 + (43.0 - lat_grid) * 0.45
     dist_ridge = np.abs(lon_grid - ridge)
-    orography = np.exp(- (dist_ridge / 0.8)**2) * 8.0  # Gradiente termico quota
+    orography = np.exp(- (dist_ridge / 0.8)**2) * 8.0
 
-    # Raffreddamento da nord a sud
     lat_factor = (lat_grid - 41.0) * 0.8
-
-    # Effetto mitigante della costa tirrenica
     sea_proximity = np.exp(- ((lon_grid - 10.8) / 1.0)**2) * 1.5
 
     t_mean = 21.0 - lat_factor - orography + sea_proximity
