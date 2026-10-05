@@ -49,25 +49,16 @@ giorni_stagione_completa = 183
 giorni_trascorsi = max(1, (end_date_dyn - start_date_dyn).days + 1)
 
 # =========================================================
-# 2. CARICAMENTO DATI ERA5 REALI E GESTIONE ROBUSTA
+# 2. CARICAMENTO DATI ERA5 REALI
 # =========================================================
 def get_climate_data(year):
-    zip_path = f"era5_land_{year}_season.zip"
     extract_dir = f"era5_extracted_{year}"
-    target_file = None
+    os.makedirs(extract_dir, exist_ok=True)
+    target_file = os.path.join(extract_dir, f"era5_land_{year}.nc")
 
-    search_dirs = ['.', extract_dir, f'era5_extracted_{current_year}', 'era5_extracted_2025']
-    for d in search_dirs:
-        if os.path.exists(d):
-            for f in os.listdir(d):
-                if f.endswith(('.nc', '.nc4', '.grib', '.grib2', '.bin')) or f == 'data.grib':
-                    target_file = os.path.join(d, f)
-                    break
-        if target_file:
-            break
-
-    if not target_file:
-        print(f" Richiesta dati ERA5 per {year} da Copernicus CDS...")
+    # Check se esiste già il file localmente
+    if not os.path.exists(target_file):
+        print(f" Richiesta dati ERA5 in formato NetCDF per {year} da Copernicus CDS...")
         try:
             import cdsapi
             cds_url = os.environ.get('CDS_URL')
@@ -86,44 +77,21 @@ def get_climate_data(year):
                     'day': [f"{d:02d}" for d in range(1, 32)],
                     'time': ['12:00'],
                     'area': [lat_max, lon_min, lat_min, lon_max],
-                    'format': 'zip',
+                    'format': 'netcdf',  # <-- RICHIESTA IN FORMATO NETCDF
                 },
-                zip_path
+                target_file
             )
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(extract_dir)
-            for f in os.listdir(extract_dir):
-                if f.endswith(('.nc', '.nc4', '.grib', '.grib2', '.bin')) or '.' not in f:
-                    target_file = os.path.join(extract_dir, f)
-                    break
         except Exception as e:
             print(f" ERRORE DOWNLOAD CDS API: {e}")
             sys.exit(1)
 
-    if not target_file:
-        print(" Nessun file ERA5 valido trovato.")
-        sys.exit(1)
-
     print(f" Lettura dataset ERA5 reale: {target_file}")
     
-    # Tentativi multipli di apertura
-    ds = None
-    engines_to_try = ['cfgrib', 'netcdf4', 'h5netcdf', 'scipy']
-    for eng in engines_to_try:
-        try:
-            ds = xr.open_dataset(target_file, engine=eng)
-            print(f" Dataset aperto con successo usando l'engine: {eng}")
-            break
-        except Exception:
-            continue
-
-    if ds is None:
-        try:
-            ds = xr.open_dataset(target_file)
-        except Exception as e:
-            print(f" Errore fatale nell'apertura del dataset: {e}")
-            print(" Verifica che nel tuo workflow/ambiente siano installati 'cfgrib' o 'netCDF4'.")
-            sys.exit(1)
+    try:
+        ds = xr.open_dataset(target_file)
+    except Exception as e:
+        print(f" Errore nell'apertura del file NetCDF: {e}")
+        sys.exit(1)
 
     t2m_var = 't2m' if 't2m' in ds else ('2t' if '2t' in ds else list(ds.data_vars)[0])
     tmax_var = 'mx2t' if 'mx2t' in ds else ('mxt2m' if 'mxt2m' in ds else list(ds.data_vars)[0])
