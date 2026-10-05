@@ -39,93 +39,93 @@ target_year = current_year if datetime.datetime.now().month >= 10 else current_y
 # 2. DOWNLOAD E CARICAMENTO DINAMICO DATI ERA5 REALI
 # =========================================================
 def get_era5_data(year):
-    zip_path = f"era5_land_{year}_season.zip"
-    extract_dir = f"era5_extracted_{year}"
-    target_file = None
+    zip_path = f"era5_land_{year}_season.zip"
+    extract_dir = f"era5_extracted_{year}"
+    target_file = None
 
-    # Check 1: Cerca se esistono già i file estratti in locale
-    search_dirs = ['.', extract_dir, 'era5_extracted_2025']
-    for d in search_dirs:
-        if os.path.exists(d):
-            for f in os.listdir(d):
-                if f.endswith(('.nc', '.grib', '.grib2', '.bin')) or f == 'data.grib':
-                    target_file = os.path.join(d, f)
-                    break
-        if target_file:
-            break
+    # Check 1: Cerca se esistono già i file estratti in locale
+    search_dirs = ['.', extract_dir, 'era5_extracted_2025']
+    for d in search_dirs:
+        if os.path.exists(d):
+            for f in os.listdir(d):
+                if f.endswith(('.nc', '.grib', '.grib2', '.bin')) or f == 'data.grib':
+                    target_file = os.path.join(d, f)
+                    break
+        if target_file:
+            break
 
-    # Check 2: Se non ci sono file, scarica da Copernicus via CDS API
-    if not target_file:
-        print(f" Requesting ERA5-Land real data for year {year} from Copernicus CDS...")
-        try:
-            import cdsapi
-            c = cdsapi.Client()
-            c.retrieve(
-                'reanalysis-era5-land',
-                {
-                    'variable': [
-                        '2m_temperature',
-                        'maximum_2m_temperature_since_previous_post_processing',
-                    ],
-                    'year': str(year),
-                    'month': ['04', '05', '06', '07', '08', '09'],
-                    'day': [f"{d:02d}" for d in range(1, 32)],
-                    'time': ['12:00'],
-                    'area': [lat_max, lon_min, lat_min, lon_max],
-                    'format': 'zip',
-                },
-                zip_path
-            )
-            
-            # Estrazione dello ZIP scaricato
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(extract_dir)
-                
-            for f in os.listdir(extract_dir):
-                if f.endswith(('.nc', '.grib', '.grib2', '.bin')) or '.' not in f:
-                    target_file = os.path.join(extract_dir, f)
-                    break
-        except Exception as e:
-            print(f" ERRORE DOWNLOAD/CONFIGURAZIONE CDS API: {e}")
-            print("Verifica di aver configurato correttamente le credenziali CDS_URL e CDS_KEY nei Secrets di GitHub.")
-            sys.exit(1)
+    # Check 2: Se non ci sono file, scarica da Copernicus via CDS API
+    if not target_file:
+        print(f" Requesting ERA5-Land real data for year {year} from Copernicus CDS...")
+        try:
+            import cdsapi
+            c = cdsapi.Client()
+            c.retrieve(
+                'reanalysis-era5-land',
+                {
+                    'variable': [
+                        '2m_temperature',
+                        'maximum_2m_temperature_since_previous_post_processing',
+                    ],
+                    'year': str(year),
+                    'month': ['04', '05', '06', '07', '08', '09'],
+                    'day': [f"{d:02d}" for d in range(1, 32)],
+                    'time': ['12:00'],
+                    'area': [lat_max, lon_min, lat_min, lon_max],
+                    'format': 'zip',
+                },
+                zip_path
+            )
+            
+            # Estrazione dello ZIP scaricato
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_dir)
+                
+            for f in os.listdir(extract_dir):
+                if f.endswith(('.nc', '.grib', '.grib2', '.bin')) or '.' not in f:
+                    target_file = os.path.join(extract_dir, f)
+                    break
+        except Exception as e:
+            print(f" ERRORE DOWNLOAD/CONFIGURAZIONE CDS API: {e}")
+            print("Verifica di aver configurato correttamente le credenziali CDS_URL e CDS_KEY nei Secrets di GitHub.")
+            sys.exit(1)
 
-    if not target_file:
-        print(" Nessun file dati valido trovato dopo il download.")
-        sys.exit(1)
+    if not target_file:
+        print(" Nessun file dati valido trovato dopo il download.")
+        sys.exit(1)
 
-    print(f" Reading real ERA5 dataset: {target_file}")
-    
-    # Lettura dataset con xarray
-    try:
-        ds = xr.open_dataset(target_file, engine='cfgrib')
-    except Exception:
-        try:
-            ds = xr.open_dataset(target_file, engine='netcdf4')
-        except Exception:
-            ds = xr.open_dataset(target_file)
+    print(f" Reading real ERA5 dataset: {target_file}")
+    
+    # Lettura dataset con xarray
+    try:
+        ds = xr.open_dataset(target_file, engine='cfgrib')
+    except Exception:
+        try:
+            ds = xr.open_dataset(target_file, engine='netcdf4')
+        except Exception:
+            ds = xr.open_dataset(target_file)
 
-    t2m_var = 't2m' if 't2m' in ds else ('2t' if '2t' in ds else list(ds.data_vars)[0])
-    tmax_var = 'mx2t' if 'mx2t' in ds else ('mxt2m' if 'mxt2m' in ds else list(ds.data_vars)[0])
+    t2m_var = 't2m' if 't2m' in ds else ('2t' if '2t' in ds else list(ds.data_vars)[0])
+    tmax_var = 'mx2t' if 'mx2t' in ds else ('mxt2m' if 'mxt2m' in ds else list(ds.data_vars)[0])
 
-    t2m = ds[t2m_var] - 273.15 if ds[t2m_var].max() > 100 else ds[t2m_var]
-    tmax = ds[tmax_var] - 273.15 if ds[tmax_var].max() > 100 else ds[tmax_var]
+    t2m = ds[t2m_var] - 273.15 if ds[t2m_var].max() > 100 else ds[t2m_var]
+    tmax = ds[tmax_var] - 273.15 if ds[tmax_var].max() > 100 else ds[tmax_var]
 
-    t2m_mean = t2m.mean(dim='time')
-    tmax_mean = tmax.mean(dim='time')
+    t2m_mean = t2m.mean(dim='time')
+    tmax_mean = tmax.mean(dim='time')
 
-    lat_name = 'latitude' if 'latitude' in ds.coords else ('lat' if 'lat' in ds.coords else list(ds.coords)[0])
-    lon_name = 'longitude' if 'longitude' in ds.coords else ('lon' if 'lon' in ds.coords else list(ds.coords)[1])
+    lat_name = 'latitude' if 'latitude' in ds.coords else ('lat' if 'lat' in ds.coords else list(ds.coords)[0])
+    lon_name = 'longitude' if 'longitude' in ds.coords else ('lon' if 'lon' in ds.coords else list(ds.coords)[1])
 
-    t2m_interp = t2m_mean.interp({lon_name: grid_lon, lat_name: grid_lat}).values
-    tmax_interp = tmax_mean.interp({lon_name: grid_lon, lat_name: grid_lat}).values
+    t2m_interp = t2m_mean.interp({lon_name: grid_lon, lat_name: grid_lat}).values
+    tmax_interp = tmax_mean.interp({lon_name: grid_lon, lat_name: grid_lat}).values
 
-    winkler_grid = np.maximum(0, t2m_interp - 10) * 183
-    huglin_daily = (np.maximum(0, t2m_interp - 10) + np.maximum(0, tmax_interp - 10)) / 2.0
-    huglin_grid = huglin_daily * 183 * k_huglin
+    winkler_grid = np.maximum(0, t2m_interp - 10) * 183
+    huglin_daily = (np.maximum(0, t2m_interp - 10) + np.maximum(0, tmax_interp - 10)) / 2.0
+    huglin_grid = huglin_daily * 183 * k_huglin
 
-    print(" Indici Bioclimatici calcolati con successo dai dati reali ERA5!")
-    return huglin_grid, winkler_grid
+    print(" Indici Bioclimatici calcolati con successo dai dati reali ERA5!")
+    return huglin_grid, winkler_grid
 
 huglin_grid, winkler_grid = get_era5_data(target_year)
 
@@ -133,32 +133,32 @@ huglin_grid, winkler_grid = get_era5_data(target_year)
 # 3. GENERAZIONE GRAFICA REALE ED IDENTICA AL LOCALE
 # =========================================================
 provinces_feature = cfeature.NaturalEarthFeature(
-    category='cultural',
-    name='admin_1_states_provinces',
-    scale='10m',
-    facecolor='none'
+    category='cultural',
+    name='admin_1_states_provinces',
+    scale='10m',
+    facecolor='none'
 )
 
 fig, axes = plt.subplots(1, 2, figsize=(20, 10), dpi=150, subplot_kw={'projection': ccrs.PlateCarree()})
 
 def format_map_base(ax, title):
-    ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
-    water_color = '#e6f2ff'
-    
-    ax.add_feature(cfeature.LAND.with_scale('10m'), facecolor='#fbfbfb', zorder=1)
-    ax.add_feature(provinces_feature, edgecolor='#555555', linewidth=0.7, linestyle='--', alpha=0.8, zorder=5)
-    ax.add_feature(cfeature.BORDERS.with_scale('10m'), linewidth=1.2, edgecolor='black', zorder=6)
-    ax.add_feature(cfeature.OCEAN.with_scale('10m'), facecolor=water_color, zorder=7)
-    ax.add_feature(cfeature.LAKES.with_scale('10m'), facecolor=water_color, edgecolor='#666666', linewidth=0.6, zorder=7)
-    ax.add_feature(cfeature.COASTLINE.with_scale('10m'), linewidth=1.1, edgecolor='black', zorder=8)
-    
-    gl = ax.gridlines(draw_labels=True, linewidth=0.4, color='gray', alpha=0.5, linestyle=':', zorder=10)
-    gl.top_labels = False
-    gl.right_labels = False
-    gl.xlabel_style = {'size': 8}
-    gl.ylabel_style = {'size': 8}
-    
-    ax.set_title(title, fontsize=11, fontweight='bold', pad=10)
+    ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
+    water_color = '#e6f2ff'
+    
+    ax.add_feature(cfeature.LAND.with_scale('10m'), facecolor='#fbfbfb', zorder=1)
+    ax.add_feature(provinces_feature, edgecolor='#555555', linewidth=0.7, linestyle='--', alpha=0.8, zorder=5)
+    ax.add_feature(cfeature.BORDERS.with_scale('10m'), linewidth=1.2, edgecolor='black', zorder=6)
+    ax.add_feature(cfeature.OCEAN.with_scale('10m'), facecolor=water_color, zorder=7)
+    ax.add_feature(cfeature.LAKES.with_scale('10m'), facecolor=water_color, edgecolor='#666666', linewidth=0.6, zorder=7)
+    ax.add_feature(cfeature.COASTLINE.with_scale('10m'), linewidth=1.1, edgecolor='black', zorder=8)
+    
+    gl = ax.gridlines(draw_labels=True, linewidth=0.4, color='gray', alpha=0.5, linestyle=':', zorder=10)
+    gl.top_labels = False
+    gl.right_labels = False
+    gl.xlabel_style = {'size': 8}
+    gl.ylabel_style = {'size': 8}
+    
+    ax.set_title(title, fontsize=11, fontweight='bold', pad=10)
 
 # MAPPA 1: HUGLIN
 format_map_base(axes[0], f'INDICE DI HUGLIN (HI) - ZONAZIONE VITICOLA ERA5 ({target_year})\n[Periodo Vegetativo: 1 Apr - 30 Set]')
