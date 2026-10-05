@@ -1,0 +1,35 @@
+name: Test Rapido 04 Agro Climatologia
+
+on:
+  workflow_dispatch: # Avvio solo manuale
+
+jobs:
+  test-agro:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del codice
+        uses: actions/checkout@v3
+
+      - name: Configurazione Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Installazione Dipendenze
+        run: |
+          python -m pip install --upgrade pip
+          pip install matplotlib numpy xarray cartopy cdsapi
+
+      - name: Esecuzione Script 04
+        env:
+          CDS_URL: ${{ secrets.CDS_URL }}
+          CDS_KEY: ${{ secrets.CDS_KEY }}
+        run: python 04_agro_climatologia_dinamica.py
+
+      - name: Commit e Push del risultato
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add mappe_bioclimatiche_huglin_winkler_era5.png
+          git commit -m "Aggiornamento mappa 04" || exit 0
+          git push
