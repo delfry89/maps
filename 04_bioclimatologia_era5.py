@@ -8,6 +8,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import numpy as np
+import xarray as xr
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from cartopy.io import DownloadWarning
@@ -15,7 +16,7 @@ from cartopy.io import DownloadWarning
 warnings.filterwarnings('ignore', category=UserWarning)
 warnings.filterwarnings('ignore', category=DownloadWarning)
 
-print("=== AVVIO SCRIPT 04: AGRO-CLIMATOLOGIA DINAMICA ERA5 (4 MAPPE) ===")
+print("=== AVVIO SCRIPT 04: AGRO-CLIMATOLOGIA DINAMICA ERA5 (4 MAPPE PERFECT) ===")
 
 # =========================================================
 # 1. CONFIGURAZIONE AREA DI STUDIO & DATE DINAMICHE
@@ -48,7 +49,7 @@ giorni_stagione_completa = 183
 giorni_trascorsi = max(1, (end_date_dyn - start_date_dyn).days + 1)
 
 # =========================================================
-# 2. CARICAMENTO DATI REALI ERA5 O FALLBACK OROGRAFICO REALISTICO
+# 2. CARICAMENTO DATI ERA5 REALI E GESTIONE ROBUSTA
 # =========================================================
 def get_climate_data(year):
     zip_path = f"era5_land_{year}_season.zip"
@@ -66,7 +67,7 @@ def get_climate_data(year):
             break
 
     if not target_file:
-        print(f" Tentativo di richiesta dati ERA5 per {year} da Copernicus CDS...")
+        print(f" Richiesta dati ERA5 per {year} da Copernicus CDS...")
         try:
             import cdsapi
             cds_url = os.environ.get('CDS_URL')
@@ -97,42 +98,40 @@ def get_climate_data(year):
                     break
         except Exception as e:
             print(f" ERRORE DOWNLOAD CDS API: {e}")
+            sys.exit(1)
 
-    if target_file:
+    if not target_file:
+        print(" Nessun file ERA5 valido trovato.")
+        sys.exit(1)
+
+    print(f" Lettura dataset ERA5 reale: {target_file}")
+    try:
+        ds = xr.open_dataset(target_file, engine='cfgrib')
+    except Exception:
         try:
-            import xarray as xr
-            print(f" Lettura dataset ERA5 reale: {target_file}")
-            try:
-                ds = xr.open_dataset(target_file, engine='cfgrib')
-            except Exception:
-                ds = xr.open_dataset(target_file)
+            ds = xr.open_dataset(target_file, engine='netcdf4')
+        except Exception:
+            ds = xr.open_dataset(target_file)
 
-            t2m_var = 't2m' if 't2m' in ds else ('2t' if '2t' in ds else list(ds.data_vars)[0])
-            tmax_var = 'mx2t' if 'mx2t' in ds else ('mxt2m' if 'mxt2m' in ds else list(ds.data_vars)[0])
+    t2m_var = 't2m' if 't2m' in ds else ('2t' if '2t' in ds else list(ds.data_vars)[0])
+    tmax_var = 'mx2t' if 'mx2t' in ds else ('mxt2m' if 'mxt2m' in ds else list(ds.data_vars)[0])
 
-            t2m = ds[t2m_var] - 273.15 if ds[t2m_var].max() > 100 else ds[t2m_var]
-            tmax = ds[tmax_var] - 273.15 if ds[tmax_var].max() > 100 else ds[tmax_var]
+    t2m = ds[t2m_var] - 273.15 if ds[t2m_var].max() > 100 else ds[t2m_var]
+    tmax = ds[tmax_var] - 273.15 if ds[tmax_var].max() > 100 else ds[tmax_var]
 
-            lat_name = 'latitude' if 'latitude' in ds.coords else ('lat' if 'lat' in ds.coords else list(ds.coords)[0])
-            lon_name = 'longitude' if 'longitude' in ds.coords else ('lon' if 'lon' in ds.coords else list(ds.coords)[1])
+    lat_name = 'latitude' if 'latitude' in ds.coords else ('lat' if 'lat' in ds.coords else list(ds.coords)[0])
+    lon_name = 'longitude' if 'longitude' in ds.coords else ('lon' if 'lon' in ds.coords else list(ds.coords)[1])
 
-            t2m_interp = t2m.mean(dim='time').interp({lon_name: grid_lon, lat_name: grid_lat}).values
-            tmax_interp = tmax.mean(dim='time').interp({lon_name: grid_lon, lat_name: grid_lat}).values
-            return t2m_interp, tmax_interp
-        except Exception as e:
-            print(f" Errore lettura xarray ({e}). Generazione modello orografico...")
+    # Ordina le coordinate per evitare righe specchiate o capovolte
+    ds = ds.sortby(lat_name).sortby(lon_name)
 
-    # FALLBACK OROGRAFICO REALISTICO
-    ridge = 12.8 + (43.0 - lat_grid) * 0.45
-    dist_ridge = np.abs(lon_grid - ridge)
-    orography = np.exp(- (dist_ridge / 0.8)**2) * 8.0
+    t2m_mean = t2m.mean(dim='time') if 'time' in t2m.dims else t2m
+    tmax_mean = tmax.mean(dim='time') if 'time' in tmax.dims else tmax
 
-    lat_factor = (lat_grid - 41.0) * 0.8
-    sea_proximity = np.exp(- ((lon_grid - 10.8) / 1.0)**2) * 1.5
+    t2m_interp = t2m_mean.interp({lon_name: grid_lon, lat_name: grid_lat}).values
+    tmax_interp = tmax_mean.interp({lon_name: grid_lon, lat_name: grid_lat}).values
 
-    t_mean = 21.0 - lat_factor - orography + sea_proximity
-    t_max = t_mean + 6.0
-    return t_mean, t_max
+    return t2m_interp, tmax_interp
 
 t2m_interp, tmax_interp = get_climate_data(target_year)
 
@@ -145,7 +144,7 @@ winkler_dyn = np.maximum(0, t2m_interp - 10) * giorni_trascorsi
 huglin_dyn = huglin_daily * giorni_trascorsi * k_huglin
 
 # =========================================================
-# 3. GENERAZIONE GRAFICA 4 MAPPE
+# 3. GENERAZIONE GRAFICA 4 MAPPE CON BOUNDARY NORM (NO ARTEFATTI)
 # =========================================================
 provinces_feature = cfeature.NaturalEarthFeature(
     category='cultural', name='admin_1_states_provinces', scale='10m', facecolor='none'
@@ -176,8 +175,9 @@ def format_map_base(ax, title):
 format_map_base(axes[0, 0], f'1. INDICE DI HUGLIN (HI) - CONSUNTIVO STAGIONALE ERA5 ({target_year})\n[Stagione Vegetativa Completa: 1 Apr - 30 Set]')
 levels_h_hist = [1200, 1500, 1800, 2100, 2400, 2700, 3000]
 cmap_h_hist = mcolors.ListedColormap(['#2b83ba', '#abdda4', '#ffffbf', '#fdae61', '#d7191c', '#a50026'])
+norm_h_hist = mcolors.BoundaryNorm(levels_h_hist, cmap_h_hist.N)
 
-cf1 = axes[0, 0].contourf(lon_grid, lat_grid, huglin_hist, levels=levels_h_hist, cmap=cmap_h_hist, extend='both', alpha=0.85, zorder=2)
+cf1 = axes[0, 0].contourf(lon_grid, lat_grid, huglin_hist, levels=levels_h_hist, cmap=cmap_h_hist, norm=norm_h_hist, extend='both', alpha=0.85, zorder=2)
 cs1 = axes[0, 0].contour(lon_grid, lat_grid, huglin_hist, levels=levels_h_hist, colors='black', linewidths=0.6, zorder=4)
 axes[0, 0].clabel(cs1, inline=True, fmt='%d', fontsize=7, colors='black', zorder=9)
 cbar1 = plt.colorbar(cf1, ax=axes[0, 0], orientation='horizontal', pad=0.05, shrink=0.85, ticks=levels_h_hist)
@@ -187,8 +187,9 @@ cbar1.set_label('Indice di Huglin Totale (HI)', fontsize=8, fontweight='bold')
 format_map_base(axes[0, 1], f'2. INDICE DI WINKLER (WI / GDD) - CONSUNTIVO STAGIONALE ERA5 ({target_year})\n[Gradi Giorno Totali Stagione Completa]')
 levels_w_hist = [800, 1110, 1390, 1670, 1940, 2220, 2600]
 cmap_w_hist = mcolors.ListedColormap(['#edf8fb', '#c6dbef', '#9ecae1', '#6baed6', '#3182bd', '#08519c'])
+norm_w_hist = mcolors.BoundaryNorm(levels_w_hist, cmap_w_hist.N)
 
-cf2 = axes[0, 1].contourf(lon_grid, lat_grid, winkler_hist, levels=levels_w_hist, cmap=cmap_w_hist, extend='both', alpha=0.85, zorder=2)
+cf2 = axes[0, 1].contourf(lon_grid, lat_grid, winkler_hist, levels=levels_w_hist, cmap=cmap_w_hist, norm=norm_w_hist, extend='both', alpha=0.85, zorder=2)
 cs2 = axes[0, 1].contour(lon_grid, lat_grid, winkler_hist, levels=levels_w_hist, colors='#000055', linewidths=0.6, zorder=4)
 axes[0, 1].clabel(cs2, inline=True, fmt='%d GDD', fontsize=7, colors='#000055', zorder=9)
 cbar2 = plt.colorbar(cf2, ax=axes[0, 1], orientation='horizontal', pad=0.05, shrink=0.85, ticks=levels_w_hist)
@@ -198,8 +199,9 @@ cbar2.set_label('Gradi Giorno Totali (GDD Base 10°C)', fontsize=8, fontweight='
 format_map_base(axes[1, 0], f'3. INDICE DI HUGLIN (HI) PROGRESSIVO - {current_year}\n[{stato_stagione}]')
 levels_h_dyn = [0, 400, 800, 1200, 1600, 2000, 2400, 2800]
 cmap_h_dyn = mcolors.ListedColormap(['#edf8fb', '#b2e2e2', '#66c2a4', '#2ca25f', '#fee391', '#fec44f', '#fe9929'])
+norm_h_dyn = mcolors.BoundaryNorm(levels_h_dyn, cmap_h_dyn.N)
 
-cf3 = axes[1, 0].contourf(lon_grid, lat_grid, huglin_dyn, levels=levels_h_dyn, cmap=cmap_h_dyn, extend='both', alpha=0.85, zorder=2)
+cf3 = axes[1, 0].contourf(lon_grid, lat_grid, huglin_dyn, levels=levels_h_dyn, cmap=cmap_h_dyn, norm=norm_h_dyn, extend='both', alpha=0.85, zorder=2)
 cs3 = axes[1, 0].contour(lon_grid, lat_grid, huglin_dyn, levels=levels_h_dyn, colors='black', linewidths=0.6, zorder=4)
 axes[1, 0].clabel(cs3, inline=True, fmt='%d', fontsize=7, colors='black', zorder=9)
 cbar3 = plt.colorbar(cf3, ax=axes[1, 0], orientation='horizontal', pad=0.05, shrink=0.85, ticks=levels_h_dyn)
@@ -209,8 +211,9 @@ cbar3.set_label('Indice di Huglin Accumulato ad Oggi (HI)', fontsize=8, fontweig
 format_map_base(axes[1, 1], f'4. GRADI GIORNO (WI / GDD) PROGRESSIVI - {current_year}\n[{stato_stagione}]')
 levels_w_dyn = [0, 300, 600, 900, 1200, 1500, 1800, 2200]
 cmap_w_dyn = mcolors.ListedColormap(['#f7fcf5', '#e5f5e0', '#c7e9c0', '#a1d99b', '#74c476', '#31a354', '#006d2c'])
+norm_w_dyn = mcolors.BoundaryNorm(levels_w_dyn, cmap_w_dyn.N)
 
-cf4 = axes[1, 1].contourf(lon_grid, lat_grid, winkler_dyn, levels=levels_w_dyn, cmap=cmap_w_dyn, extend='both', alpha=0.85, zorder=2)
+cf4 = axes[1, 1].contourf(lon_grid, lat_grid, winkler_dyn, levels=levels_w_dyn, cmap=cmap_w_dyn, norm=norm_w_dyn, extend='both', alpha=0.85, zorder=2)
 cs4 = axes[1, 1].contour(lon_grid, lat_grid, winkler_dyn, levels=levels_w_dyn, colors='#000055', linewidths=0.6, zorder=4)
 axes[1, 1].clabel(cs4, inline=True, fmt='%d GDD', fontsize=7, colors='#000055', zorder=9)
 cbar4 = plt.colorbar(cf4, ax=axes[1, 1], orientation='horizontal', pad=0.05, shrink=0.85, ticks=levels_w_dyn)
