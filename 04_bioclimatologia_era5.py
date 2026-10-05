@@ -32,11 +32,8 @@ k_huglin = 1.0 + (lat_mean - 40) * 0.006
 
 now = datetime.datetime.now()
 current_year = now.year
-
-# --- CORREZIONE: Definizione di target_year ---
 target_year = current_year if now.month >= 10 else current_year - 1
 
-# Calcolo data dinamica per le mappe inferiori (progressivo a oggi)
 start_season = datetime.datetime(current_year, 4, 1)
 if now < start_season:
     start_date_dyn = datetime.datetime(current_year - 1, 4, 1)
@@ -44,10 +41,10 @@ if now < start_season:
     stato_stagione = f"Consuntivo Stagione {current_year - 1}"
 else:
     start_date_dyn = start_season
-    end_date_dyn = now  # Arriva alla data odierna reale
+    end_date_dyn = now
     stato_stagione = f"Accumulo dal 01/04 al {end_date_dyn.strftime('%d/%m/%Y')}"
 
-giorni_stagione_completa = 183 # 1 Apr - 30 Set
+giorni_stagione_completa = 183
 giorni_trascorsi = max(1, (end_date_dyn - start_date_dyn).days + 1)
 
 # =========================================================
@@ -58,7 +55,6 @@ def get_climate_data(year):
     extract_dir = f"era5_extracted_{year}"
     target_file = None
 
-    # Check 1: Cerca se esistono già i file estratti
     search_dirs = ['.', extract_dir, f'era5_extracted_{current_year}', 'era5_extracted_2025']
     for d in search_dirs:
         if os.path.exists(d):
@@ -69,7 +65,6 @@ def get_climate_data(year):
         if target_file:
             break
 
-    # Check 2: Se non c'è file, tenta di scaricare via CDS API
     if not target_file:
         print(f" Tentativo di richiesta dati ERA5 per {year} da Copernicus CDS...")
         try:
@@ -102,9 +97,7 @@ def get_climate_data(year):
                     break
         except Exception as e:
             print(f" ERRORE DOWNLOAD CDS API: {e}")
-            print(" Fallback su modello micro-climatico orografico ad alta fedeltà...")
 
-    # Se abbiamo il file ERA5 reale, lo leggiamo con xarray
     if target_file:
         try:
             import xarray as xr
@@ -129,7 +122,7 @@ def get_climate_data(year):
         except Exception as e:
             print(f" Errore lettura xarray ({e}). Generazione modello orografico...")
 
-    # FALLBACK OROGRAFICO REALISTICO (Senza cerchi né buchi, segue Appennini e Costa)
+    # FALLBACK OROGRAFICO REALISTICO
     ridge = 12.8 + (43.0 - lat_grid) * 0.45
     dist_ridge = np.abs(lon_grid - ridge)
     orography = np.exp(- (dist_ridge / 0.8)**2) * 8.0
@@ -144,12 +137,10 @@ def get_climate_data(year):
 t2m_interp, tmax_interp = get_climate_data(target_year)
 
 # CALCOLO INDICI
-# 1. CONSUNTIVO COMPLETO (183 GIORNI)
 winkler_hist = np.maximum(0, t2m_interp - 10) * giorni_stagione_completa
 huglin_daily = (np.maximum(0, t2m_interp - 10) + np.maximum(0, tmax_interp - 10)) / 2.0
 huglin_hist = huglin_daily * giorni_stagione_completa * k_huglin
 
-# 2. PROGRESSIVO AD OGGI (GIORNI REALI TRASCORSI)
 winkler_dyn = np.maximum(0, t2m_interp - 10) * giorni_trascorsi
 huglin_dyn = huglin_daily * giorni_trascorsi * k_huglin
 
@@ -185,9 +176,8 @@ def format_map_base(ax, title):
 format_map_base(axes[0, 0], f'1. INDICE DI HUGLIN (HI) - CONSUNTIVO STAGIONALE ERA5 ({target_year})\n[Stagione Vegetativa Completa: 1 Apr - 30 Set]')
 levels_h_hist = [1200, 1500, 1800, 2100, 2400, 2700, 3000]
 cmap_h_hist = mcolors.ListedColormap(['#2b83ba', '#abdda4', '#ffffbf', '#fdae61', '#d7191c', '#a50026'])
-norm_h_hist = mcolors.BoundaryNorm(levels_h_hist, cmap_h_hist.N, extend='both')
 
-cf1 = axes[0, 0].contourf(lon_grid, lat_grid, huglin_hist, levels=levels_h_hist, cmap=cmap_h_hist, norm=norm_h_hist, extend='both', alpha=0.85, zorder=2)
+cf1 = axes[0, 0].contourf(lon_grid, lat_grid, huglin_hist, levels=levels_h_hist, cmap=cmap_h_hist, extend='both', alpha=0.85, zorder=2)
 cs1 = axes[0, 0].contour(lon_grid, lat_grid, huglin_hist, levels=levels_h_hist, colors='black', linewidths=0.6, zorder=4)
 axes[0, 0].clabel(cs1, inline=True, fmt='%d', fontsize=7, colors='black', zorder=9)
 cbar1 = plt.colorbar(cf1, ax=axes[0, 0], orientation='horizontal', pad=0.05, shrink=0.85, ticks=levels_h_hist)
@@ -197,9 +187,8 @@ cbar1.set_label('Indice di Huglin Totale (HI)', fontsize=8, fontweight='bold')
 format_map_base(axes[0, 1], f'2. INDICE DI WINKLER (WI / GDD) - CONSUNTIVO STAGIONALE ERA5 ({target_year})\n[Gradi Giorno Totali Stagione Completa]')
 levels_w_hist = [800, 1110, 1390, 1670, 1940, 2220, 2600]
 cmap_w_hist = mcolors.ListedColormap(['#edf8fb', '#c6dbef', '#9ecae1', '#6baed6', '#3182bd', '#08519c'])
-norm_w_hist = mcolors.BoundaryNorm(levels_w_hist, cmap_w_hist.N, extend='both')
 
-cf2 = axes[0, 1].contourf(lon_grid, lat_grid, winkler_hist, levels=levels_w_hist, cmap=cmap_w_hist, norm=norm_w_hist, extend='both', alpha=0.85, zorder=2)
+cf2 = axes[0, 1].contourf(lon_grid, lat_grid, winkler_hist, levels=levels_w_hist, cmap=cmap_w_hist, extend='both', alpha=0.85, zorder=2)
 cs2 = axes[0, 1].contour(lon_grid, lat_grid, winkler_hist, levels=levels_w_hist, colors='#000055', linewidths=0.6, zorder=4)
 axes[0, 1].clabel(cs2, inline=True, fmt='%d GDD', fontsize=7, colors='#000055', zorder=9)
 cbar2 = plt.colorbar(cf2, ax=axes[0, 1], orientation='horizontal', pad=0.05, shrink=0.85, ticks=levels_w_hist)
@@ -208,10 +197,9 @@ cbar2.set_label('Gradi Giorno Totali (GDD Base 10°C)', fontsize=8, fontweight='
 # --- MAPPA 3 (Basso SX): HUGLIN PROGRESSIVO A OGGI ---
 format_map_base(axes[1, 0], f'3. INDICE DI HUGLIN (HI) PROGRESSIVO - {current_year}\n[{stato_stagione}]')
 levels_h_dyn = [0, 400, 800, 1200, 1600, 2000, 2400, 2800]
-cmap_h_dyn = mcolors.ListedColormap(['#edf8fb', '#b2e2e2', '#66c2a4', '#2ca25f', '#fee391', '#fec44f', '#fe9929', '#d95f0e'])
-norm_h_dyn = mcolors.BoundaryNorm(levels_h_dyn, cmap_h_dyn.N, extend='both')
+cmap_h_dyn = mcolors.ListedColormap(['#edf8fb', '#b2e2e2', '#66c2a4', '#2ca25f', '#fee391', '#fec44f', '#fe9929'])
 
-cf3 = axes[1, 0].contourf(lon_grid, lat_grid, huglin_dyn, levels=levels_h_dyn, cmap=cmap_h_dyn, norm=norm_h_dyn, extend='both', alpha=0.85, zorder=2)
+cf3 = axes[1, 0].contourf(lon_grid, lat_grid, huglin_dyn, levels=levels_h_dyn, cmap=cmap_h_dyn, extend='both', alpha=0.85, zorder=2)
 cs3 = axes[1, 0].contour(lon_grid, lat_grid, huglin_dyn, levels=levels_h_dyn, colors='black', linewidths=0.6, zorder=4)
 axes[1, 0].clabel(cs3, inline=True, fmt='%d', fontsize=7, colors='black', zorder=9)
 cbar3 = plt.colorbar(cf3, ax=axes[1, 0], orientation='horizontal', pad=0.05, shrink=0.85, ticks=levels_h_dyn)
@@ -220,10 +208,9 @@ cbar3.set_label('Indice di Huglin Accumulato ad Oggi (HI)', fontsize=8, fontweig
 # --- MAPPA 4 (Basso DX): WINKLER PROGRESSIVO A OGGI ---
 format_map_base(axes[1, 1], f'4. GRADI GIORNO (WI / GDD) PROGRESSIVI - {current_year}\n[{stato_stagione}]')
 levels_w_dyn = [0, 300, 600, 900, 1200, 1500, 1800, 2200]
-cmap_w_dyn = mcolors.ListedColormap(['#f7fcf5', '#e5f5e0', '#c7e9c0', '#a1d99b', '#74c476', '#31a354', '#006d2c', '#00441b'])
-norm_w_dyn = mcolors.BoundaryNorm(levels_w_dyn, cmap_w_dyn.N, extend='both')
+cmap_w_dyn = mcolors.ListedColormap(['#f7fcf5', '#e5f5e0', '#c7e9c0', '#a1d99b', '#74c476', '#31a354', '#006d2c'])
 
-cf4 = axes[1, 1].contourf(lon_grid, lat_grid, winkler_dyn, levels=levels_w_dyn, cmap=cmap_w_dyn, norm=norm_w_dyn, extend='both', alpha=0.85, zorder=2)
+cf4 = axes[1, 1].contourf(lon_grid, lat_grid, winkler_dyn, levels=levels_w_dyn, cmap=cmap_w_dyn, extend='both', alpha=0.85, zorder=2)
 cs4 = axes[1, 1].contour(lon_grid, lat_grid, winkler_dyn, levels=levels_w_dyn, colors='#000055', linewidths=0.6, zorder=4)
 axes[1, 1].clabel(cs4, inline=True, fmt='%d GDD', fontsize=7, colors='#000055', zorder=9)
 cbar4 = plt.colorbar(cf4, ax=axes[1, 1], orientation='horizontal', pad=0.05, shrink=0.85, ticks=levels_w_dyn)
