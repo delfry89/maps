@@ -24,7 +24,7 @@ jobs:
         env:
           CDS_URL: ${{ secrets.CDS_URL }}
           CDS_KEY: ${{ secrets.CDS_KEY }}
-        run: python 04_agro_climatologia_dinamica.py
+        run: python 04_bioclimatologia_era5.py
 
       - name: Commit e Push del risultato
         run: |
