@@ -60,7 +60,7 @@ def get_climate_data(year):
     for d in search_dirs:
         if os.path.exists(d):
             for f in os.listdir(d):
-                if f.endswith(('.nc', '.grib', '.grib2', '.bin')) or f == 'data.grib':
+                if f.endswith(('.nc', '.nc4', '.grib', '.grib2', '.bin')) or f == 'data.grib':
                     target_file = os.path.join(d, f)
                     break
         if target_file:
@@ -93,7 +93,7 @@ def get_climate_data(year):
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(extract_dir)
             for f in os.listdir(extract_dir):
-                if f.endswith(('.nc', '.grib', '.grib2', '.bin')) or '.' not in f:
+                if f.endswith(('.nc', '.nc4', '.grib', '.grib2', '.bin')) or '.' not in f:
                     target_file = os.path.join(extract_dir, f)
                     break
         except Exception as e:
@@ -105,13 +105,25 @@ def get_climate_data(year):
         sys.exit(1)
 
     print(f" Lettura dataset ERA5 reale: {target_file}")
-    try:
-        ds = xr.open_dataset(target_file, engine='cfgrib')
-    except Exception:
+    
+    # Tentativi multipli di apertura
+    ds = None
+    engines_to_try = ['cfgrib', 'netcdf4', 'h5netcdf', 'scipy']
+    for eng in engines_to_try:
         try:
-            ds = xr.open_dataset(target_file, engine='netcdf4')
+            ds = xr.open_dataset(target_file, engine=eng)
+            print(f" Dataset aperto con successo usando l'engine: {eng}")
+            break
         except Exception:
+            continue
+
+    if ds is None:
+        try:
             ds = xr.open_dataset(target_file)
+        except Exception as e:
+            print(f" Errore fatale nell'apertura del dataset: {e}")
+            print(" Verifica che nel tuo workflow/ambiente siano installati 'cfgrib' o 'netCDF4'.")
+            sys.exit(1)
 
     t2m_var = 't2m' if 't2m' in ds else ('2t' if '2t' in ds else list(ds.data_vars)[0])
     tmax_var = 'mx2t' if 'mx2t' in ds else ('mxt2m' if 'mxt2m' in ds else list(ds.data_vars)[0])
@@ -122,7 +134,6 @@ def get_climate_data(year):
     lat_name = 'latitude' if 'latitude' in ds.coords else ('lat' if 'lat' in ds.coords else list(ds.coords)[0])
     lon_name = 'longitude' if 'longitude' in ds.coords else ('lon' if 'lon' in ds.coords else list(ds.coords)[1])
 
-    # Ordina le coordinate per evitare righe specchiate o capovolte
     ds = ds.sortby(lat_name).sortby(lon_name)
 
     t2m_mean = t2m.mean(dim='time') if 'time' in t2m.dims else t2m
@@ -144,7 +155,7 @@ winkler_dyn = np.maximum(0, t2m_interp - 10) * giorni_trascorsi
 huglin_dyn = huglin_daily * giorni_trascorsi * k_huglin
 
 # =========================================================
-# 3. GENERAZIONE GRAFICA 4 MAPPE CON BOUNDARY NORM (NO ARTEFATTI)
+# 3. GENERAZIONE GRAFICA 4 MAPPE CON BOUNDARY NORM
 # =========================================================
 provinces_feature = cfeature.NaturalEarthFeature(
     category='cultural', name='admin_1_states_provinces', scale='10m', facecolor='none'
