@@ -2,8 +2,9 @@ import os
 import ssl
 import warnings
 import matplotlib
-matplotlib.use('Agg')
+matplotlib.use('Agg')  # Modalità headless per GitHub Actions / Server
 
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -37,7 +38,14 @@ def standardize_coords(da):
         da = da.rename(rename_dict)
 
     if 'longitude' in da.coords and (da.longitude.values > 180).any():
-        da = da.assign_coords(longitude=(((da.longitude + 180) % 360) - 180)).sortby('longitude')
+        da = da.assign_coords(longitude=(((da.longitude + 180) % 360) - 180))
+
+    # CRUCIALE: Ordina SEMPRE sia latitudine che longitudine in senso crescente
+    if 'latitude' in da.coords:
+        da = da.sortby('latitude')
+    if 'longitude' in da.coords:
+        da = da.sortby('longitude')
+
     return da
 
 lon_min, lon_max = 10.0, 14.0
@@ -55,7 +63,7 @@ lon_grid, lat_grid = np.meshgrid(grid_lon, grid_lat)
 # =========================================================
 try:
     print("Download dati GFS per bilancio idrico e VPD...")
-    # Precipitazione cumulata 24h
+    # Precipitazione cumulata 24h (somma delle 4 corse f06, f12, f18, f24)
     pcp_total = None
     for f_hour in [6, 12, 18, 24]:
         H_t = Herbie(date=run_date_str, fxx=f_hour, model='gfs', product='pgrb2.0p25')
@@ -82,14 +90,14 @@ try:
                           da_v.interp(longitude=grid_lon, latitude=grid_lat).values**2)
 
 except Exception as e:
-    print(f"⚠️ Errore download GFS: {e}. Attivazione fallback...")
+    print(f" Errore download GFS: {e}. Attivazione fallback...")
     pcp_total = np.zeros((350, 350))
     tmp_interp = np.full((350, 350), 25.0)
     rh_interp = np.full((350, 350), 45.0)
     wind_interp = np.full((350, 350), 3.0)
 
 # =========================================================
-# 2. CALCOLO BILANCIO IDRICO ($P - ET_0$) E VPD
+# 2. CALCOLO BILANCIO IDRICO (P - ET0) E VPD
 # =========================================================
 # ET0 (Hargreaves/Samani)
 et0_grid = np.clip(0.16 * (tmp_interp + 10) * np.sqrt(np.clip(wind_interp, 0.5, 12)), 0, 10)
@@ -98,13 +106,12 @@ et0_grid = np.clip(0.16 * (tmp_interp + 10) * np.sqrt(np.clip(wind_interp, 0.5, 
 water_balance = pcp_total - et0_grid
 
 # Deficit Pressione Vapore (VPD in kPa)
-# Tensione di vapore saturo (es) e attuale (ea)
 es = 0.61078 * np.exp((17.27 * tmp_interp) / (tmp_interp + 237.3))
 ea = es * (rh_interp / 100.0)
 vpd_grid = np.clip(es - ea, 0, 5.0)
 
 # =========================================================
-# 3. GRAFICA E MAPPATURA
+# 3. GRAFICA E MAPPATURA CARTOPY
 # =========================================================
 provinces_feature = cfeature.NaturalEarthFeature(
     category='cultural', name='admin_1_states_provinces', scale='10m', facecolor='none'
@@ -115,15 +122,22 @@ fig, axes = plt.subplots(1, 2, figsize=(20, 10), dpi=150, subplot_kw={'projectio
 def format_map_base(ax, title):
     ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
     water_color = '#e6f2ff'
+    
+    # Terra sotto i dati (zorder 1)
     ax.add_feature(cfeature.LAND.with_scale('10m'), facecolor='#ffffff', zorder=1)
-    ax.add_feature(provinces_feature, edgecolor='#444444', linewidth=0.7, linestyle='--', alpha=0.85, zorder=5)
-    ax.add_feature(cfeature.BORDERS.with_scale('10m'), linewidth=1.2, edgecolor='black', zorder=6)
-    ax.add_feature(cfeature.OCEAN.with_scale('10m'), facecolor=water_color, zorder=7)
-    ax.add_feature(cfeature.LAKES.with_scale('10m'), facecolor=water_color, edgecolor='#666666', linewidth=0.6, zorder=7)
-    ax.add_feature(cfeature.COASTLINE.with_scale('10m'), linewidth=1.1, edgecolor='black', zorder=8)
+    
+    # Grigliata (zorder 10)
     gl = ax.gridlines(draw_labels=True, linewidth=0.4, color='gray', alpha=0.5, linestyle=':', zorder=10)
     gl.top_labels = False; gl.right_labels = False
     gl.xlabel_style = {'size': 8}; gl.ylabel_style = {'size': 8}
+    
+    # Layer sopra i dati (zorder da 12 a 15)
+    ax.add_feature(provinces_feature, edgecolor='#444444', linewidth=0.7, linestyle='--', alpha=0.85, zorder=12)
+    ax.add_feature(cfeature.BORDERS.with_scale('10m'), linewidth=1.2, edgecolor='black', zorder=13)
+    ax.add_feature(cfeature.OCEAN.with_scale('10m'), facecolor=water_color, zorder=14)
+    ax.add_feature(cfeature.LAKES.with_scale('10m'), facecolor=water_color, edgecolor='#666666', linewidth=0.6, zorder=14)
+    ax.add_feature(cfeature.COASTLINE.with_scale('10m'), linewidth=1.1, edgecolor='black', zorder=15)
+    
     ax.set_title(title, fontsize=11, fontweight='bold', pad=10)
 
 def add_signature(ax):
@@ -131,26 +145,71 @@ def add_signature(ax):
             fontsize=8, fontweight='bold', color='black', ha='right', va='bottom', zorder=20,
             bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.75, edgecolor='none'))
 
-# Riquadro 1: Bilancio Idrico
+# ---------------------------------------------------------
+# Riquadro 1: Bilancio Idrico (P - ET0)
+# ---------------------------------------------------------
 format_map_base(axes[0], '1. BILANCIO IDRICO CUMULATO 24H (P - ET0)\n[Deficit / Surplus Idrico in mm]')
-cf1 = axes[0].contourf(lon_grid, lat_grid, water_balance, levels=np.linspace(-8, 8, 17), cmap='RdYlBu', alpha=0.85, zorder=2)
-cbar1 = plt.colorbar(cf1, ax=axes[0], orientation='horizontal', pad=0.06, shrink=0.85)
+
+cmap_bal = matplotlib.colormaps['RdYlBu'].copy()
+cmap_bal.set_over('#000066')   # Blu scuro per piogge/surplus > +8 mm
+cmap_bal.set_under('#800000')  # Rosso scuro per deficit > -8 mm
+
+levels_bal = np.linspace(-8, 8, 17)
+norm_bal = mcolors.BoundaryNorm(levels_bal, cmap_bal.N)
+
+cf1 = axes[0].contourf(
+    lon_grid, lat_grid, water_balance,
+    levels=levels_bal,
+    cmap=cmap_bal,
+    norm=norm_bal,
+    extend='both',  # Risolve il buco bianco al centro dei temporali
+    alpha=0.85,
+    zorder=3
+)
+
+cs1 = axes[0].contour(
+    lon_grid, lat_grid, water_balance,
+    levels=[0], colors='black', linewidths=1.0, linestyles='--', zorder=8
+)
+
+cbar1 = plt.colorbar(cf1, ax=axes[0], orientation='horizontal', pad=0.06, shrink=0.85, extend='both', ticks=np.arange(-8, 9, 2))
 cbar1.set_label('Bilancio Idrico (mm/giorno) [Rosso = Deficit | Blu = Surplus]', fontsize=9, fontweight='bold')
 add_signature(axes[0])
 
+# ---------------------------------------------------------
 # Riquadro 2: VPD Stress Traspirativo
+# ---------------------------------------------------------
 format_map_base(axes[1], '2. DEFICIT PRESSIONE VAPORE (VPD)\n[Stress Stomatico e Traspirativo della Vite]')
-cf2 = axes[1].contourf(lon_grid, lat_grid, vpd_grid, levels=np.linspace(0, 3.0, 13), cmap='YlOrRd', alpha=0.85, zorder=2)
-cs2 = axes[1].contour(lon_grid, lat_grid, vpd_grid, levels=[1.5, 2.0, 2.5], colors='purple', linewidths=1.2, linestyles='--', zorder=8)
+
+cmap_vpd = matplotlib.colormaps['YlOrRd'].copy()
+cmap_vpd.set_over('#4A0000')  # Rosso scuro per VPD > 3.0 kPa
+
+levels_vpd = np.linspace(0, 3.0, 13)
+cf2 = axes[1].contourf(
+    lon_grid, lat_grid, vpd_grid,
+    levels=levels_vpd,
+    cmap=cmap_vpd,
+    extend='max',
+    alpha=0.85,
+    zorder=3
+)
+
+cs2 = axes[1].contour(
+    lon_grid, lat_grid, vpd_grid,
+    levels=[1.5, 2.0, 2.5], colors='purple', linewidths=1.2, linestyles='--', zorder=8
+)
 axes[1].clabel(cs2, inline=True, fmt='%.1f kPa', fontsize=8, colors='purple', zorder=9)
-cbar2 = plt.colorbar(cf2, ax=axes[1], orientation='horizontal', pad=0.06, shrink=0.85)
+
+cbar2 = plt.colorbar(cf2, ax=axes[1], orientation='horizontal', pad=0.06, shrink=0.85, extend='max')
 cbar2.set_label('VPD (kPa) [> 2.0 kPa = Chiusura Stomatica / Stress]', fontsize=9, fontweight='bold')
 add_signature(axes[1])
 
+# Layout finale
 plt.suptitle(f"BILANCIO IDRICO & STRESS FISIOLOGICO VITE - CENTRO ITALIA\nRun Meteo: {run_date_str} UTC", fontsize=14, fontweight='bold', y=0.98)
 plt.tight_layout(rect=[0, 0, 1, 0.93])
 
 output_filename = 'mappe_bilancio_idrico.png'
 plt.savefig(output_filename, bbox_inches='tight', dpi=150)
 plt.close()
-print(f"✅ MAPPA BILANCIO IDRICO GENERATA: {output_filename}")
+
+print(f" MAPPA BILANCIO IDRICO GENERATA CON SUCCESSO: {output_filename}")
