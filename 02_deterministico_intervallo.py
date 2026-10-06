@@ -21,9 +21,9 @@ warnings.filterwarnings('ignore')
 # =========================================================
 # 1. CONFIGURAZIONE PARAMETRI E PESI
 # =========================================================
-peso_ECMWF = 0.20
-peso_GFS = 0.20
-peso_ICON = 0.60
+peso_ECMWF = 0.50
+peso_GFS = 0.25
+peso_ICON = 0.25
 
 # Definiamo i 3 intervalli target a 24h, 48h e 72h
 intervalli = [
