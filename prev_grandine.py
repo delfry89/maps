@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.colors import rgb_to_hsv
 
-# Tenta l'importazione di Cartopy per generare la mappa geografica ex-novo
+# Supporto Cartopy per il plotting geografico
 try:
     import cartopy.crs as ccrs
     import cartopy.feature as cfeature
@@ -34,7 +34,7 @@ print("Scaricamento delle mappe orarie...")
 session = requests.Session()
 session.headers.update(HEADERS)
 
-for i in range(1, 24):  # Da MTS01 a MTS23
+for i in range(1, 24):
     url = BASE_URL.format(i)
     file_path = os.path.join(IMAGES_DIR, f"MTS{i:02d}.png")
     
@@ -45,117 +45,124 @@ for i in range(1, 24):  # Da MTS01 a MTS23
                 f.write(r.content)
             img = Image.open(file_path).convert("RGB")
             images.append(np.array(img))
-            print(f"Scaricata con successo: MTS{i:02d}.png")
         else:
-            print(f"Impossibile scaricare {url} (Status HTTP: {r.status_code})")
+            print(f"Impossibile scaricare {url} (Status: {r.status_code})")
     except Exception as e:
-        print(f"Errore durante il download di {url}: {e}")
+        print(f"Errore download {url}: {e}")
 
 if not images:
-    raise RuntimeError("Nessuna immagine scaricata. Verifica gli URL o le regole del firewall.")
+    raise RuntimeError("Nessuna immagine scaricata.")
 
 height, width, _ = images[0].shape
 
 # -------------------------------------------------------------------------
-# 2. RILEVAMENTO ESCLUSIVO DELLA SCALA GRANDINE (HSV)
+# 2. SELEZIONE RIGIDA DELLE SOLLE GRANDINE (ESCLUZIONE FAKE)
 # -------------------------------------------------------------------------
-def extract_hail_only(img_array):
+def extract_hail_strict(img_array):
     """
-    Estrae SOLO i pixel appartenenti alla scala della grandine:
-    Azzurro chiaro, Azzurro, Blu chiaro, Blu, Blu scuro, Giallo e Arancione.
-    Esclude sfondi, scritte, territori e la scala temporalesca.
+    Estrae l'indice di grandine considerando rigorosamente le sole tonalità
+    della scala a sinistra:
+    - Azzurro (Soglia 0.3 - 0.4)
+    - Blu / Blu Scuro (Soglia 0.5 - 0.7)
+    - Giallo / Arancione (Soglia 0.8 - 0.9)
     """
-    # Normalizza RGB tra 0 e 1
     rgb_norm = img_array.astype(np.float32) / 255.0
     hsv = rgb_to_hsv(rgb_norm)
     
-    h = hsv[:, :, 0]  # Tonalità (Hue) [0, 1]
-    s = hsv[:, :, 1]  # Saturazione [0, 1]
-    v = hsv[:, :, 2]  # Luminosità [0, 1]
-
-    hail_intensity = np.zeros((height, width), dtype=np.float32)
-
-    # Maschera 1: Ciano / Azzurro / Blu / Blu Scuro (Tonalità Hue indicativamente tra 0.50 e 0.75)
-    mask_blue_cyan = (h >= 0.48) & (h <= 0.75) & (s > 0.25) & (v > 0.25)
+    h = hsv[:, :, 0]  # Hue
+    s = hsv[:, :, 1]  # Saturation
+    v = hsv[:, :, 2]  # Value
     
-    # Maschera 2: Giallo / Arancione (Tonalità Hue indicativamente tra 0.08 e 0.18)
-    mask_yellow_orange = (h >= 0.07) & (h <= 0.18) & (s > 0.40) & (v > 0.40)
+    hail_val = np.zeros((height, width), dtype=np.float32)
 
-    # Assegnazione valori stimati dell'indice di grandine (da ~0.3 a ~1.0)
-    hail_intensity[mask_blue_cyan] = 0.5  # Valore medio-basso (Azzurro/Blu)
-    hail_intensity[mask_yellow_orange] = 0.9  # Valore alto (Giallo/Arancio)
+    # 1. AZZURRO / CYAN (Soglia minima 0.3 - 0.4)
+    # Imposta la saturazione min > 0.45 per ignorare lo sfondo o il verde chiaro
+    mask_cyan = (h >= 0.48) & (h <= 0.58) & (s >= 0.45) & (v >= 0.40)
+    hail_val[mask_cyan] = 0.35
 
-    # Ritaglia solo la regione geografica interna (esclude le bande/legende laterali e superiori)
-    # Coordinate stimata della mappa centrale: Y [8% - 92%], X [12% - 88%]
-    y_min, y_max = int(height * 0.08), int(height * 0.92)
-    x_min, x_max = int(width * 0.12), int(width * 0.88)
+    # 2. BLU / BLU SCURO (Soglia media 0.5 - 0.7)
+    mask_blue = (h > 0.58) & (h <= 0.72) & (s >= 0.50) & (v >= 0.30)
+    hail_val[mask_blue] = 0.60
+
+    # 3. GIALLO / ARANCIONE (Soglia alta 0.8 - 0.9)
+    mask_yellow = (h >= 0.08) & (h <= 0.16) & (s >= 0.60) & (v >= 0.60)
+    hail_val[mask_yellow] = 0.85
+
+    # Ritaglio del solo dominio geografico effettivo (esclude legende esterne e bordi)
+    y1, y2 = int(height * 0.05), int(height * 0.94)
+    x1, x2 = int(width * 0.10), int(width * 0.90)
     
-    clean_hail = np.zeros_like(hail_intensity)
-    clean_hail[y_min:y_max, x_min:x_max] = hail_intensity[y_min:y_max, x_min:x_max]
-
-    return clean_hail
+    clean_map = np.zeros_like(hail_val)
+    clean_map[y1:y2, x1:x2] = hail_val[y1:y2, x1:x2]
+    
+    return clean_map
 
 # -------------------------------------------------------------------------
 # 3. ACCUMULO DELLE 24 ORE
 # -------------------------------------------------------------------------
 accumulated_hail = np.zeros((height, width), dtype=np.float32)
 
-print("Elaborazione ed estrazione isolata della sola grandine...")
+print("Filtraggio cromatico e accumulo orario in corso...")
 for img in images:
-    hail_layer = extract_hail_only(img)
+    hail_layer = extract_hail_strict(img)
     accumulated_hail += hail_layer
 
 # -------------------------------------------------------------------------
-# 4. CREAZIONE DI UNA NUOVA MAPPA EX-NOVO
+# 4. PLOTTING MAPPA EX-NOVO
 # -------------------------------------------------------------------------
-# Definizione della nuova Palette di Colori dedicata all'accumulo grandine
-cmap_hail_sum = mcolors.LinearSegmentedColormap.from_list(
-    "hail_cum", ["#ffffff00", "#7dd3fc", "#0284c7", "#1e3a8a", "#fde047", "#f97316"], N=256
+# Ritagliamo la matrice per farla coincidere con i limiti della mappa
+y1, y2 = int(height * 0.05), int(height * 0.94)
+x1, x2 = int(width * 0.10), int(width * 0.90)
+cropped_accum = accumulated_hail[y1:y2, x1:x2]
+
+# Palette pulita per l'accumulo grandine
+cmap_hail = mcolors.LinearSegmentedColormap.from_list(
+    "hail_24h", 
+    ["#ffffff00", "#38bdf8", "#1d4ed8", "#1e1b4b", "#eab308", "#ea580c"], 
+    N=256
 )
 
-# Estremi geografici approssimativi della domini della mappa Italia/Sardegna
-extent = [5.0, 20.0, 36.0, 48.0]  # [lon_min, lon_max, lat_min, lat_max]
+# Estensione geografica tarata sulla finestra ritagliata [LonMin, LonMax, LatMin, LatMax]
+extent_crop = [5.5, 19.5, 36.2, 47.5]
 
-print("Generazione della nuova mappa...")
+print("Generazione output...")
+fig = plt.figure(figsize=(10, 10), dpi=150)
 
 if HAS_CARTOPY:
-    # Genera una mappa vettoriale geografica del tutto NUOVA
-    fig = plt.figure(figsize=(10, 10), dpi=150)
     ax = plt.axes(projection=ccrs.PlateCarree())
-    ax.set_extent(extent, crs=ccrs.PlateCarree())
+    ax.set_extent(extent_crop, crs=ccrs.PlateCarree())
 
-    # Aggiungi dettagli cartografici di sfondo puliti
+    # Elementi cartografici vettoriali di sfondo
     ax.add_feature(cfeature.LAND, facecolor='#f8fafc')
     ax.add_feature(cfeature.OCEAN, facecolor='#e0f2fe')
-    ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor='#334155')
-    ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=0.6, edgecolor='#64748b')
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor='#1e293b')
+    ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=0.6, edgecolor='#475569')
 
-    # Traccia la matrice dell'accumulo grandine
+    # Mascheriamo i valori nulli (0) per renderli totalmente trasparenti
+    masked_accum = np.ma.masked_where(cropped_accum < 0.2, cropped_accum)
+
     im = ax.imshow(
-        accumulated_hail,
-        extent=extent,
+        masked_accum,
+        extent=extent_crop,
         origin='upper',
-        cmap=cmap_hail_sum,
+        cmap=cmap_hail,
         alpha=0.85,
-        vmin=0.1,
         transform=ccrs.PlateCarree()
     )
 else:
-    # Mappa pulita bidimensionale senza dipendenze C
-    fig, ax = plt.subplots(figsize=(10, 10), dpi=150)
-    ax.set_facecolor('#f8fafc')
-    im = ax.imshow(accumulated_hail, cmap=cmap_hail_sum, vmin=0.1)
+    ax = fig.add_subplot(111)
+    masked_accum = np.ma.masked_where(cropped_accum < 0.2, cropped_accum)
+    im = ax.imshow(masked_accum, cmap=cmap_hail, origin='upper')
     plt.axis('off')
 
-# Barra della legenda personalizzata
+# Barra della legenda
 cbar = plt.colorbar(im, ax=ax, orientation='vertical', shrink=0.7, pad=0.03)
-cbar.set_label('Accumulo Complessivo Indice Grandine (24h)', fontsize=11, fontweight='bold')
+cbar.set_label('Somma Indice Grandine (24h)', fontsize=11, fontweight='bold')
 
-plt.title("Mappa Accumulo Grandine 24 Ore (Ex-Novo)", fontsize=14, fontweight='bold', pad=15)
+plt.title("Mappa Complessiva Grandine 24 Ore (Solo Rilevazioni Reali)", fontsize=13, fontweight='bold', pad=12)
 
-# Salvataggio Mappa Finale
 output_path = "mappa_riassunto_24h.png"
 plt.savefig(output_path, bbox_inches='tight', dpi=200)
 plt.close()
 
-print(f"Mappa ex-novo creata e salvata con successo in: {output_path}")
+print(f"Mappa generata correttamente: {output_path}")
