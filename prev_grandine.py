@@ -12,28 +12,40 @@ BASE_URL = "https://www.centrometeo.com/wrfmap/italia_sard/MTS{:02d}_d01.png"
 IMAGES_DIR = "downloaded_maps"
 os.makedirs(IMAGES_DIR, exist_ok=True)
 
+# Intestazioni HTTP per bypassare il blocco 403 (simula un browser reale)
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+    "Referer": "https://www.centrometeo.com/",
+    "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+}
+
 images = []
 print("Scaricamento delle mappe orarie...")
+
+# Crea una sessione per riutilizzare la connessione ed evitare ulteriori blocchi
+session = requests.Session()
+session.headers.update(HEADERS)
 
 for i in range(1, 24):  # Da MTS01 a MTS23
     url = BASE_URL.format(i)
     file_path = os.path.join(IMAGES_DIR, f"MTS{i:02d}.png")
     
     try:
-        r = requests.get(url, timeout=10)
+        r = session.get(url, timeout=15)
         if r.status_code == 200:
             with open(file_path, "wb") as f:
                 f.write(r.content)
             img = Image.open(file_path).convert("RGB")
             images.append(np.array(img))
-            print(f"Scaricata: MTS{i:02d}.png")
+            print(f"Scaricata con successo: MTS{i:02d}.png")
         else:
-            print(f"Impossibile scaricare {url} (Status: {r.status_code})")
+            print(f"Impossibile scaricare {url} (Status HTTP: {r.status_code})")
     except Exception as e:
         print(f"Errore durante il download di {url}: {e}")
 
 if not images:
-    raise RuntimeError("Nessuna immagine scaricata. Verifica gli URL.")
+    raise RuntimeError("Nessuna immagine scaricata. Verifica gli URL o le regole del firewall del server.")
 
 # Base e dimensioni dell'immagine
 base_image = images[0]
