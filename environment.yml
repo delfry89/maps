@@ -1,8 +1,9 @@
 name: meteo
 channels:
   - conda-forge
+  - nodefaults
 dependencies:
-  - python=3.11
+  - python=3.12
   - cartopy
   - xarray
   - matplotlib
@@ -18,3 +19,5 @@ dependencies:
   - requests
   - folium
   - pip
+  - pip:
+      - pillow
