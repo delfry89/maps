@@ -124,11 +124,12 @@ def get_unified_data():
 def generate_hail_map():
     df = get_unified_data()
     
-    # Mappa base centrata sull'Italia con OpenStreetMap gratuita (Opzione A)
+    # Mappa base Esri World Street Map (Opzione consigliata)
     m = folium.Map(
         location=[42.5000, 12.5000],
         zoom_start=6,
-        tiles='OpenStreetMap'
+        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+        attr='Tiles &copy; Esri &mdash; Source: Esri, DeLorme, NAVTEQ, USGS, Intermap, iPC, NRCAN, Esri Japan, METI, Esri China (Hong Kong), Esri (Thailand), TomTom, 2012'
     )
     
     nomi_mesi = {
