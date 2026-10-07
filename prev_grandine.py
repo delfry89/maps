@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.colors import rgb_to_hsv
 
-# Supporto Cartopy per il plotting geografico
+# Supporto Cartopy per il plotting geografico vettoriale
 try:
     import cartopy.crs as ccrs
     import cartopy.feature as cfeature
@@ -45,23 +45,24 @@ for i in range(1, 24):
                 f.write(r.content)
             img = Image.open(file_path).convert("RGB")
             images.append(np.array(img))
+            print(f"Scaricata con successo: MTS{i:02d}.png")
         else:
-            print(f"Impossibile scaricare {url} (Status: {r.status_code})")
+            print(f"Impossibile scaricare {url} (Status HTTP: {r.status_code})")
     except Exception as e:
         print(f"Errore download {url}: {e}")
 
 if not images:
-    raise RuntimeError("Nessuna immagine scaricata.")
+    raise RuntimeError("Nessuna immagine scaricata. Verifica connessione o URL.")
 
 height, width, _ = images[0].shape
 
 # -------------------------------------------------------------------------
-# 2. SELEZIONE RIGIDA DELLE SOLLE GRANDINE (ESCLUZIONE FAKE)
+# 2. SELEZIONE RIGIDA DELLE SOGLIE GRANDINE (RECOVER BLU SCURO & LIGURIA)
 # -------------------------------------------------------------------------
 def extract_hail_strict(img_array):
     """
-    Estrae l'indice di grandine basandosi sui colori esatti della scala di sinistra,
-    inclusi i blu scuri/indaco della Liguria ed Emilia.
+    Estrae l'indice di grandine basandosi sulle tonalità della scala a sinistra,
+    recuperando i toni di blu scuro/indaco (Liguria/Emilia) senza generare fake.
     """
     rgb_norm = img_array.astype(np.float32) / 255.0
     hsv = rgb_to_hsv(rgb_norm)
@@ -77,7 +78,7 @@ def extract_hail_strict(img_array):
     hail_val[mask_cyan] = 0.35
 
     # 2. BLU MEDIO / BLU SCURO / INDACO (Soglia ~0.5 - 0.7) -> Liguria / Emilia
-    # Ammettiamo luminosità più bassa (v >= 0.15) per catturare i blu scuri
+    # Ammettiamo luminosità più bassa (v >= 0.15) per catturare i blu scuri veri
     mask_blue = (h > 0.55) & (h <= 0.78) & (s >= 0.35) & (v >= 0.15)
     hail_val[mask_blue] = 0.65
 
@@ -85,7 +86,7 @@ def extract_hail_strict(img_array):
     mask_yellow = (h >= 0.05) & (h <= 0.18) & (s >= 0.50) & (v >= 0.50)
     hail_val[mask_yellow] = 0.88
 
-    # Ritaglio del solo dominio geografico effettivo (esclude legende esterne)
+    # Ritaglio del solo dominio geografico effettivo (esclude legende esterne originali)
     y1, y2 = int(height * 0.05), int(height * 0.94)
     x1, x2 = int(width * 0.10), int(width * 0.90)
     
@@ -95,7 +96,7 @@ def extract_hail_strict(img_array):
     return clean_map
 
 # -------------------------------------------------------------------------
-# 3. ACCUMULO DELLE 24 ORE
+# 3. ACCUMULO SULLE 24 ORE
 # -------------------------------------------------------------------------
 accumulated_hail = np.zeros((height, width), dtype=np.float32)
 
@@ -105,42 +106,53 @@ for img in images:
     accumulated_hail += hail_layer
 
 # -------------------------------------------------------------------------
-# 4. PLOTTING MAPPA EX-NOVO
+# 4. PLOTTING GRAFICO EX-NOVO CON STILE "DELFRY"
 # -------------------------------------------------------------------------
-# Ritagliamo la matrice per farla coincidere con i limiti della mappa
+# Ritaglio della matrice per allineamento Cartopy
 y1, y2 = int(height * 0.05), int(height * 0.94)
 x1, x2 = int(width * 0.10), int(width * 0.90)
 cropped_accum = accumulated_hail[y1:y2, x1:x2]
 
-# Palette pulita per l'accumulo grandine
+# Coordinate esatte del dominio geografico Italia
+lon_min, lon_max = 6.0, 19.0
+lat_min, lat_max = 35.5, 47.5
+extent = [lon_min, lon_max, lat_min, lat_max]
+
+# Colormap dedicata all'accumulo grandine 24h
 cmap_hail = mcolors.LinearSegmentedColormap.from_list(
     "hail_24h", 
     ["#ffffff00", "#38bdf8", "#1d4ed8", "#1e1b4b", "#eab308", "#ea580c"], 
     N=256
 )
 
-# Estensione geografica tarata sulla finestra ritagliata [LonMin, LonMax, LatMin, LatMax]
-extent_crop = [5.5, 19.5, 36.2, 47.5]
-
-print("Generazione output...")
-fig = plt.figure(figsize=(10, 10), dpi=150)
+print("Generazione mappa stile Delfry...")
+fig = plt.figure(figsize=(11, 11), dpi=150)
 
 if HAS_CARTOPY:
     ax = plt.axes(projection=ccrs.PlateCarree())
-    ax.set_extent(extent_crop, crs=ccrs.PlateCarree())
+    ax.set_extent(extent, crs=ccrs.PlateCarree())
 
-    # Elementi cartografici vettoriali di sfondo
-    ax.add_feature(cfeature.LAND, facecolor='#f8fafc')
-    ax.add_feature(cfeature.OCEAN, facecolor='#e0f2fe')
-    ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor='#1e293b')
-    ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=0.6, edgecolor='#475569')
+    # --- RIFINIZIONI CARTOGRAFICHE VETTORIALI AD ALTA RISOLUZIONE (10m) ---
+    ax.add_feature(cfeature.LAND.with_scale('10m'), facecolor='#f8fafc')
+    ax.add_feature(cfeature.OCEAN.with_scale('10m'), facecolor='#e0f2fe')
+    ax.add_feature(cfeature.COASTLINE.with_scale('10m'), linewidth=0.8, edgecolor='black')
+    ax.add_feature(cfeature.BORDERS.with_scale('10m'), linewidth=0.8, edgecolor='black')
+    ax.add_feature(cfeature.LAKES.with_scale('10m'), facecolor='none', edgecolor='black', linewidth=0.3)
+    
+    # Confini regionali e provinciali tratteggiati (dal tuo vecchio codice)
+    ax.add_feature(
+        cfeature.NaturalEarthFeature('cultural', 'admin_1_states_provinces_lines', '10m', facecolor='none'),
+        edgecolor='gray',
+        linewidth=0.5,
+        linestyle=':'
+    )
 
-    # Mascheriamo i valori nulli (0) per renderli totalmente trasparenti
+    # Mascheriamo i valori nulli (< 0.2) per renderli trasparenti
     masked_accum = np.ma.masked_where(cropped_accum < 0.2, cropped_accum)
 
     im = ax.imshow(
         masked_accum,
-        extent=extent_crop,
+        extent=extent,
         origin='upper',
         cmap=cmap_hail,
         alpha=0.85,
@@ -152,14 +164,29 @@ else:
     im = ax.imshow(masked_accum, cmap=cmap_hail, origin='upper')
     plt.axis('off')
 
-# Barra della legenda
-cbar = plt.colorbar(im, ax=ax, orientation='vertical', shrink=0.7, pad=0.03)
-cbar.set_label('Somma Indice Grandine (24h)', fontsize=11, fontweight='bold')
+# --- LEGENDA E INTESTAZIONI STILE DELFRY ---
+cbar = plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, shrink=0.85, aspect=30)
+cbar.set_label('Accumulo Complessivo Indice Grandine (24h)', fontsize=10, fontweight='bold')
+cbar.ax.tick_params(labelsize=8)
 
-plt.title("Mappa Complessiva Grandine 24 Ore (Solo Rilevazioni Reali)", fontsize=13, fontweight='bold', pad=12)
+plt.title('MAPPA RIASSUNTIVA GRANDINE 24 ORE - ITALIA\nElaborazione dati accumulati MTS01 - MTS23', fontsize=11, fontweight='bold', pad=12)
 
+# Firma in basso a destra (esattamente come nel tuo vecchio codice)
+ax.text(
+    0.99, 0.01, 
+    'Elab. & grafica Delfry', 
+    transform=ax.transAxes, 
+    fontsize=8, 
+    fontweight='bold', 
+    color='black', 
+    ha='right', 
+    va='bottom', 
+    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7, edgecolor='none')
+)
+
+# Salvataggio della Mappa Finale
 output_path = "mappa_riassunto_24h.png"
 plt.savefig(output_path, bbox_inches='tight', dpi=200)
 plt.close()
 
-print(f"Mappa generata correttamente: {output_path}")
+print(f"🖼️ Mappa stile 'Delfry' salvata con successo: {output_path}")
