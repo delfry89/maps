@@ -60,11 +60,8 @@ height, width, _ = images[0].shape
 # -------------------------------------------------------------------------
 def extract_hail_strict(img_array):
     """
-    Estrae l'indice di grandine considerando rigorosamente le sole tonalità
-    della scala a sinistra:
-    - Azzurro (Soglia 0.3 - 0.4)
-    - Blu / Blu Scuro (Soglia 0.5 - 0.7)
-    - Giallo / Arancione (Soglia 0.8 - 0.9)
+    Estrae l'indice di grandine basandosi sui colori esatti della scala di sinistra,
+    inclusi i blu scuri/indaco della Liguria ed Emilia.
     """
     rgb_norm = img_array.astype(np.float32) / 255.0
     hsv = rgb_to_hsv(rgb_norm)
@@ -75,20 +72,20 @@ def extract_hail_strict(img_array):
     
     hail_val = np.zeros((height, width), dtype=np.float32)
 
-    # 1. AZZURRO / CYAN (Soglia minima 0.3 - 0.4)
-    # Imposta la saturazione min > 0.45 per ignorare lo sfondo o il verde chiaro
-    mask_cyan = (h >= 0.48) & (h <= 0.58) & (s >= 0.45) & (v >= 0.40)
+    # 1. AZZURRO CHIARO / CIANO (Soglia ~0.3 - 0.4)
+    mask_cyan = (h >= 0.48) & (h <= 0.55) & (s >= 0.30) & (v >= 0.50)
     hail_val[mask_cyan] = 0.35
 
-    # 2. BLU / BLU SCURO (Soglia media 0.5 - 0.7)
-    mask_blue = (h > 0.58) & (h <= 0.72) & (s >= 0.50) & (v >= 0.30)
-    hail_val[mask_blue] = 0.60
+    # 2. BLU MEDIO / BLU SCURO / INDACO (Soglia ~0.5 - 0.7) -> Liguria / Emilia
+    # Ammettiamo luminosità più bassa (v >= 0.15) per catturare i blu scuri
+    mask_blue = (h > 0.55) & (h <= 0.78) & (s >= 0.35) & (v >= 0.15)
+    hail_val[mask_blue] = 0.65
 
-    # 3. GIALLO / ARANCIONE (Soglia alta 0.8 - 0.9)
-    mask_yellow = (h >= 0.08) & (h <= 0.16) & (s >= 0.60) & (v >= 0.60)
-    hail_val[mask_yellow] = 0.85
+    # 3. GIALLO / ARANCIONE (Soglia ~0.8 - 0.9)
+    mask_yellow = (h >= 0.05) & (h <= 0.18) & (s >= 0.50) & (v >= 0.50)
+    hail_val[mask_yellow] = 0.88
 
-    # Ritaglio del solo dominio geografico effettivo (esclude legende esterne e bordi)
+    # Ritaglio del solo dominio geografico effettivo (esclude legende esterne)
     y1, y2 = int(height * 0.05), int(height * 0.94)
     x1, x2 = int(width * 0.10), int(width * 0.90)
     
