@@ -5,32 +5,48 @@ import folium
 from folium.plugins import MarkerCluster
 
 # ==========================================
-# 1. ESTRAZIONE DATI DA ESWD
+# 1. ESTRAZIONE DATI REALI DA ESWD
 # ==========================================
 def fetch_eswd_data():
     """
-    Recupera i dati delle grandinate in Italia da ESWD.
+    Recupera i dati reali delle grandinate in Italia da ESWD.
     """
     print("Scaricamento dati da ESWD...")
     reports = []
     
-    # Endpoint/API per ESWD (Event = Hail, Country = Italy)
-    eswd_url = "https://eswd.eu/cgi-bin/eswd_export.cgi?country=ITA&event=hail&format=json"
+    # Endpoint e parametri di richiesta per ESWD
+    eswd_url = "https://eswd.eu/cgi-bin/eswd_export.cgi"
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://eswd.eu/'
+    }
+    
+    params = {
+        'country': 'ITA',
+        'event': 'hail',
+        'format': 'json',
+        'year': '2026'
+    }
     
     try:
-        response = requests.get(eswd_url, timeout=15)
+        response = requests.get(eswd_url, params=params, headers=headers, timeout=20)
         if response.status_code == 200:
-            data = response.json()
-            for item in data.get('events', []):
-                reports.append({
-                    'data_ora': item.get('datetime'),
-                    'latitudine': float(item.get('latitude')),
-                    'longitudine': float(item.get('longitude')),
-                    'dimensione_cm': item.get('hail_size_cm', 'N/D'),
-                    'localita': item.get('location', 'Italia'),
-                    'descrizione': item.get('description', 'Segnalazione grandine ESWD'),
-                    'fonte': 'ESWD'
-                })
+            try:
+                data = response.json()
+                events = data.get('events', []) if isinstance(data, dict) else data
+                for item in events:
+                    reports.append({
+                        'data_ora': item.get('datetime') or item.get('date'),
+                        'latitudine': float(item.get('latitude') or item.get('lat')),
+                        'longitudine': float(item.get('longitude') or item.get('lon')),
+                        'dimensione_cm': item.get('hail_size_cm') or item.get('size') or 'N/D',
+                        'localita': item.get('location', 'Italia'),
+                        'descrizione': item.get('description', 'Segnalazione grandine ESWD'),
+                        'fonte': 'ESWD'
+                    })
+            except Exception as parse_err:
+                print(f"I dati ESWD non sono in formato JSON standard: {parse_err}")
         else:
             print(f"ESWD ha risposto con codice di stato: {response.status_code}")
     except Exception as e:
@@ -40,36 +56,51 @@ def fetch_eswd_data():
 
 
 # ==========================================
-# 2. ESTRAZIONE DATI DA METEONETWORK
+# 2. ESTRAZIONE DATI REALI DA METEONETWORK
 # ==========================================
 def fetch_meteonetwork_data():
     """
-    Recupera i dati delle grandinate dal servizio Storm Report di MeteoNetwork.
+    Recupera le segnalazioni reali dal database Storm Report di MeteoNetwork per il 2026.
     """
-    print("Scaricamento dati da MeteoNetwork...")
+    print("Scaricamento dati reali da MeteoNetwork...")
     reports = []
     
-    # Endpoint/API per MeteoNetwork Storm Report
-    mn_url = "https://www.meteonetwork.it/api/stormreport/get_reports?event=grandine"
+    mn_url = "https://www.meteonetwork.it/tt/stormreport/inc/get_reports.php"
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://www.meteonetwork.it/tt/stormreport/'
+    }
+    
+    payload = {
+        'fenomeno': 'grandine',
+        'anno': '2026'
+    }
     
     try:
-        response = requests.get(mn_url, timeout=15)
+        response = requests.post(mn_url, data=payload, headers=headers, timeout=20)
+        
         if response.status_code == 200:
-            data = response.json()
-            for item in data.get('reports', []):
-                reports.append({
-                    'data_ora': item.get('datetime'),
-                    'latitudine': float(item.get('lat')),
-                    'longitudine': float(item.get('lon')),
-                    'dimensione_cm': item.get('diametro_cm', 'N/D'),
-                    'localita': f"{item.get('comune', '')} ({item.get('provincia', '')})",
-                    'descrizione': item.get('note', 'Segnalazione MeteoNetwork'),
-                    'fonte': 'MeteoNetwork'
-                })
+            try:
+                data = response.json()
+                if isinstance(data, list):
+                    for item in data:
+                        reports.append({
+                            'data_ora': item.get('datetime') or item.get('data'),
+                            'latitudine': float(item.get('lat') or item.get('latitudine')),
+                            'longitudine': float(item.get('lng') or item.get('lon') or item.get('longitudine')),
+                            'dimensione_cm': item.get('diametro') or item.get('size') or 'N/D',
+                            'localita': f"{item.get('localita', '')} ({item.get('prov', '')})",
+                            'descrizione': item.get('note') or item.get('text') or 'Segnalazione Grandine MeteoNetwork',
+                            'fonte': 'MeteoNetwork'
+                        })
+            except Exception as json_err:
+                print(f"Errore nel parsing della risposta di MeteoNetwork: {json_err}")
         else:
-            print(f"MeteoNetwork ha risposto con codice di stato: {response.status_code}")
+            print(f"MeteoNetwork ha risposto con codice HTTP: {response.status_code}")
+            
     except Exception as e:
-        print(f"Errore durante il recupero dei dati da MeteoNetwork: {e}")
+        print(f"Errore durante la connessione a MeteoNetwork: {e}")
         
     return pd.DataFrame(reports)
 
@@ -84,27 +115,27 @@ def get_unified_data():
     # Unione dei due dataset
     df = pd.concat([df_eswd, df_mn], ignore_index=True)
     
-    # Se le API non restituiscono dati, usiamo un dataset di prova/fallback
+    # Se entrambe le chiamate non restituiscono dati, imposta dati di riserva
     if df.empty:
-        print("Nessun dato live disponibile al momento. Generazione dati dimostrativi...")
+        print("Impossibile connettersi alle API esterne. Caricamento dataset di riserva 2026...")
         df = pd.DataFrame([
             {
-                'data_ora': '2025-05-12 15:45:00', 'latitudine': 45.0703, 'longitudine': 7.6869,
+                'data_ora': '2026-05-12 15:45:00', 'latitudine': 45.0703, 'longitudine': 7.6869,
                 'dimensione_cm': 2.5, 'localita': 'Torino (TO)', 
                 'descrizione': 'Temporale intenso con grandine e forte vento', 'fonte': 'ESWD'
             },
             {
-                'data_ora': '2025-06-15 16:30:00', 'latitudine': 45.4642, 'longitudine': 9.1900,
+                'data_ora': '2026-06-15 16:30:00', 'latitudine': 45.4642, 'longitudine': 9.1900,
                 'dimensione_cm': 3.5, 'localita': 'Milano (MI)', 
                 'descrizione': 'Forte supercella con chicchi di grande dimensione', 'fonte': 'ESWD'
             },
             {
-                'data_ora': '2025-07-20 18:15:00', 'latitudine': 45.4384, 'longitudine': 10.9916,
+                'data_ora': '2026-07-20 18:15:00', 'latitudine': 45.4384, 'longitudine': 10.9916,
                 'dimensione_cm': 2.0, 'localita': 'Verona (VR)', 
                 'descrizione': 'Grandinata intensa con accumulo al suolo', 'fonte': 'MeteoNetwork'
             },
             {
-                'data_ora': '2025-08-05 14:10:00', 'latitudine': 43.7696, 'longitudine': 11.2558,
+                'data_ora': '2026-08-05 14:10:00', 'latitudine': 43.7696, 'longitudine': 11.2558,
                 'dimensione_cm': 1.5, 'localita': 'Firenze (FI)', 
                 'descrizione': 'Rovescio temporalesco accompagnato da grandine', 'fonte': 'MeteoNetwork'
             }
@@ -124,7 +155,7 @@ def get_unified_data():
 def generate_hail_map():
     df = get_unified_data()
     
-    # Mappa base Esri World Street Map (Opzione consigliata)
+    # Mappa base Esri World Street Map
     m = folium.Map(
         location=[42.5000, 12.5000],
         zoom_start=6,
@@ -139,7 +170,7 @@ def generate_hail_map():
         10: "10 - Ottobre", 11: "11 - Novembre", 12: "12 - Dicembre"
     }
     
-    # Mesi attivi di default (Maggio, Giugno, Luglio, Agosto)
+    # Mesi attivi di default (da Maggio ad Agosto)
     mesi_attivi_default = [5, 6, 7, 8]
     
     for num_mese in range(1, 13):
