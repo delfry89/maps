@@ -124,11 +124,11 @@ def get_unified_data():
 def generate_hail_map():
     df = get_unified_data()
     
-    # Mappa base centrata sull'Italia
+    # Mappa base centrata sull'Italia con OpenStreetMap gratuita (Opzione A)
     m = folium.Map(
         location=[42.5000, 12.5000],
         zoom_start=6,
-        tiles='CartoDB positron'
+        tiles='OpenStreetMap'
     )
     
     nomi_mesi = {
