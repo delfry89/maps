@@ -57,13 +57,15 @@ if not images:
 height, width, _ = images[0].shape
 
 # -------------------------------------------------------------------------
-# 2. RICERCA DEL SOTTOINSIEME GRANDINE DENTRO L'INSIEME TEMPORALESCO
+# 2. RICERCA DEL SOTTOINSIEME GRANDINE (SENZA ISOIPSE E CON BLENDING REALE)
 # -------------------------------------------------------------------------
 def extract_hail_subset_only(img_array):
     """
-    Individua l'area del temporale (Rosso/Viola), ma ESTRAE ed ISOLA solo il
-    sottoinsieme di pixel che presentano la firma cromatica della GRANDINE
-    (Azzurro, Blu, Indaco, Giallo, Arancio e vettori bianchi di contorno).
+    Estrae SOLO l'Indice Grandine cromatico effettivo:
+    - Azzurro/Ciano puro
+    - Blu/Indaco sovrapposto al Rosso dei temporali (Liguria, Emilia, Lazio)
+    - Giallo/Arancione puro
+    Rimuove completamente le isoipse bianche/grigie e lo sfondo del territorio.
     """
     rgb = img_array.astype(np.float32)
     r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
@@ -74,28 +76,22 @@ def extract_hail_subset_only(img_array):
 
     hail_val = np.zeros((height, width), dtype=np.float32)
 
-    # A. AZZURRO / CIANO / BLU CHIARO (Grandine debole/media 0.3 - 0.5)
-    # Riconosce i pixel dove la componente B o G supera R (oppure Hue tra azzurro e blu)
-    mask_cyan_blue = (b > r + 20) & (b > 80) & (h >= 0.45) & (h <= 0.72)
-    hail_val[mask_cyan_blue] = 0.45
+    # 1. AZZURRO / CIANO PURO (Grandine 0.3 - 0.4 su mari o territori chiari)
+    mask_cyan = (b > r + 15) & (b > 100) & (h >= 0.46) & (h <= 0.58) & (s > 0.20)
+    hail_val[mask_cyan] = 0.35
 
-    # B. BLU SCURO / INDACO / SFUMATURE VIOLA SU FONDO ROSSO (Grandine forte 0.6 - 0.7)
-    # Quando l'indaco si sovrappone al rosso, R e B sono entrambi alti, ma B ha forte presenza
-    mask_indaco_blend = (b > 60) & (r > 40) & (h >= 0.68) & (h <= 0.82) & (s > 0.35)
-    hail_val[mask_indaco_blend] = 0.65
+    # 2. BLU / INDACO / VIOLA DA BLENDING (Grandine 0.5 - 0.7 sovrapposta al temporale ROSSO)
+    # Riconosce quando c'è BLU marcato insieme al ROSSO del fondo (Liguria, Emilia, Viterbese)
+    # Esclude il nero (v < 0.10) e il bianco delle isoipse (s < 0.25)
+    mask_blue_blend = (b > 45) & (s >= 0.25) & (v >= 0.12) & (v <= 0.85) & (h >= 0.52) & (h <= 0.82)
+    hail_val[mask_blue_blend] = 0.65
 
-    # C. GIALLO / ARANCIONE (Grandine massima 0.8 - 0.9)
-    # R e G entrambi alti, B basso
-    mask_yellow_orange = (r > 180) & (g > 140) & (b < 100) & (h >= 0.07) & (h <= 0.18)
+    # 3. GIALLO / ARANCIONE PURO (Grandine 0.8 - 0.9)
+    # Componente Rossa e Verde forti, Blu limitato (esclude il bianco e l'arancio temporalesco privo di verde)
+    mask_yellow_orange = (r > 150) & (g > 110) & (b < 90) & (h >= 0.07) & (h <= 0.18) & (s >= 0.40)
     hail_val[mask_yellow_orange] = 0.88
 
-    # D. LINEE BIANCHE/ISOIPSE DI CONTORNO DENTRO IL NUCLEO (Contorno dell'Hail Index)
-    # Pixel quasi bianchi (R,G,B alti e poca saturazione) situati dentro l'area del temporale
-    mask_contour_lines = (r > 200) & (g > 200) & (b > 200) & (s < 0.15)
-    # Consideriamo le linee bianche solo se sono vicine ad aree rosse/temporalesche
-    mask_storm_background = ((r > 160) & (g < 100) & (b < 100)) | (h > 0.85) | (h < 0.05)
-    
-    # Applichiamo il filtro geografico interno (taglia legende esterne)
+    # FILTRO GEOGRAFICO INTERNO (Taglia le legende esterne della mappa originale)
     y1, y2 = int(height * 0.05), int(height * 0.94)
     x1, x2 = int(width * 0.10), int(width * 0.90)
 
@@ -109,7 +105,7 @@ def extract_hail_subset_only(img_array):
 # -------------------------------------------------------------------------
 accumulated_hail = np.zeros((height, width), dtype=np.float32)
 
-print("Estrazione precisa del sottoinsieme grandine in corso...")
+print("Estrazione corretta sottoinsieme grandine senza isoipse bianche...")
 for img in images:
     hail_layer = extract_hail_subset_only(img)
     accumulated_hail += hail_layer
@@ -125,14 +121,14 @@ lon_min, lon_max = 6.0, 19.0
 lat_min, lat_max = 35.5, 47.5
 extent = [lon_min, lon_max, lat_min, lat_max]
 
-# Colormap esclusiva della grandine accumulata nelle 24h
+# Palette graduata per la grandine accumulata nelle 24h
 cmap_hail = mcolors.LinearSegmentedColormap.from_list(
-    "hail_subset_24h", 
+    "hail_24h_clean", 
     ["#ffffff00", "#38bdf8", "#1d4ed8", "#1e1b4b", "#eab308", "#ea580c"], 
     N=256
 )
 
-print("Generazione mappa ex-novo stile Delfry...")
+print("Generazione mappa riassuntiva ex-novo...")
 fig = plt.figure(figsize=(11, 11), dpi=150)
 
 if HAS_CARTOPY:
@@ -154,7 +150,7 @@ if HAS_CARTOPY:
         linestyle=':'
     )
 
-    # Mascheriamo i pixel dove l'accumulo è zero o trascurabile
+    # Mascheriamo i valori nulli (< 0.2)
     masked_accum = np.ma.masked_where(cropped_accum < 0.2, cropped_accum)
 
     im = ax.imshow(
