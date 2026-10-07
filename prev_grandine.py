@@ -57,91 +57,96 @@ if not images:
 height, width, _ = images[0].shape
 
 # -------------------------------------------------------------------------
-# 2. ESTRAZIONE NUCLEI AD ALTO RISCHIO (GRANDINE + TEMPORALE INTENSO)
+# 2. RICERCA DEL SOTTOINSIEME GRANDINE DENTRO L'INSIEME TEMPORALESCO
 # -------------------------------------------------------------------------
-def extract_phenomena_comprehensive(img_array):
+def extract_hail_subset_only(img_array):
     """
-    Estrae tutti i nuclei attivi catturando le tonalità di:
-    - Azzurro/Ciano/Blu Scuro/Indaco (Hail Index a sinistra)
-    - Giallo/Arancione (Hail Index alto e Temporali intensi)
-    - Rosso / Viola / Marrone (Temporali con elevata riflettività/MTS > 50)
-    Esclude rigorosamente i toni del verde (territorio/MTS basso), mare e sfondi.
+    Individua l'area del temporale (Rosso/Viola), ma ESTRAE ed ISOLA solo il
+    sottoinsieme di pixel che presentano la firma cromatica della GRANDINE
+    (Azzurro, Blu, Indaco, Giallo, Arancio e vettori bianchi di contorno).
     """
-    rgb_norm = img_array.astype(np.float32) / 255.0
+    rgb = img_array.astype(np.float32)
+    r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
+    
+    rgb_norm = rgb / 255.0
     hsv = rgb_to_hsv(rgb_norm)
+    h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+
+    hail_val = np.zeros((height, width), dtype=np.float32)
+
+    # A. AZZURRO / CIANO / BLU CHIARO (Grandine debole/media 0.3 - 0.5)
+    # Riconosce i pixel dove la componente B o G supera R (oppure Hue tra azzurro e blu)
+    mask_cyan_blue = (b > r + 20) & (b > 80) & (h >= 0.45) & (h <= 0.72)
+    hail_val[mask_cyan_blue] = 0.45
+
+    # B. BLU SCURO / INDACO / SFUMATURE VIOLA SU FONDO ROSSO (Grandine forte 0.6 - 0.7)
+    # Quando l'indaco si sovrappone al rosso, R e B sono entrambi alti, ma B ha forte presenza
+    mask_indaco_blend = (b > 60) & (r > 40) & (h >= 0.68) & (h <= 0.82) & (s > 0.35)
+    hail_val[mask_indaco_blend] = 0.65
+
+    # C. GIALLO / ARANCIONE (Grandine massima 0.8 - 0.9)
+    # R e G entrambi alti, B basso
+    mask_yellow_orange = (r > 180) & (g > 140) & (b < 100) & (h >= 0.07) & (h <= 0.18)
+    hail_val[mask_yellow_orange] = 0.88
+
+    # D. LINEE BIANCHE/ISOIPSE DI CONTORNO DENTRO IL NUCLEO (Contorno dell'Hail Index)
+    # Pixel quasi bianchi (R,G,B alti e poca saturazione) situati dentro l'area del temporale
+    mask_contour_lines = (r > 200) & (g > 200) & (b > 200) & (s < 0.15)
+    # Consideriamo le linee bianche solo se sono vicine ad aree rosse/temporalesche
+    mask_storm_background = ((r > 160) & (g < 100) & (b < 100)) | (h > 0.85) | (h < 0.05)
     
-    h = hsv[:, :, 0]  # Hue (Tonalità)
-    s = hsv[:, :, 1]  # Saturation
-    v = hsv[:, :, 2]  # Value (Luminosità)
-    
-    val_map = np.zeros((height, width), dtype=np.float32)
-
-    # 1. AZZURRO / BLU / INDACO (Hail Index 0.3 - 0.7)
-    mask_blue_hail = (h >= 0.45) & (h <= 0.78) & (s >= 0.25) & (v >= 0.15)
-    val_map[mask_blue_hail] = 0.60
-
-    # 2. GIALLO / ARANCIONE (Hail Index 0.8 - 0.9 e Temporali Forti)
-    mask_yellow_orange = (h >= 0.06) & (h <= 0.18) & (s >= 0.40) & (v >= 0.40)
-    val_map[mask_yellow_orange] = 0.85
-
-    # 3. ROSSO / VIOLA / BORDEAUX (Temporali Intensi MTS 60-90) -> Liguria, Emilia, Viterbese
-    # Include sia il rosso (Hue vicina a 0/1) che i viola (Hue > 0.80)
-    mask_red_purple = ((h < 0.06) | (h > 0.80)) & (s >= 0.35) & (v >= 0.20)
-    val_map[mask_red_purple] = 0.95
-
-    # Area geografica interna (taglia titoli e legende laterali)
+    # Applichiamo il filtro geografico interno (taglia legende esterne)
     y1, y2 = int(height * 0.05), int(height * 0.94)
     x1, x2 = int(width * 0.10), int(width * 0.90)
-    
-    clean_map = np.zeros_like(val_map)
-    clean_map[y1:y2, x1:x2] = val_map[y1:y2, x1:x2]
-    
+
+    clean_map = np.zeros_like(hail_val)
+    clean_map[y1:y2, x1:x2] = hail_val[y1:y2, x1:x2]
+
     return clean_map
 
 # -------------------------------------------------------------------------
 # 3. ACCUMULO SULLE 24 ORE
 # -------------------------------------------------------------------------
-accumulated_signal = np.zeros((height, width), dtype=np.float32)
+accumulated_hail = np.zeros((height, width), dtype=np.float32)
 
-print("Filtraggio cromatico globale ed estrazione accumulo 24h...")
+print("Estrazione precisa del sottoinsieme grandine in corso...")
 for img in images:
-    layer = extract_phenomena_comprehensive(img)
-    accumulated_signal += layer
+    hail_layer = extract_hail_subset_only(img)
+    accumulated_hail += hail_layer
 
 # -------------------------------------------------------------------------
-# 4. PLOTTING GRAFICO EX-NOVO CON STILE "DELFRY"
+# 4. PLOTTING MAPPA EX-NOVO CON STILE "DELFRY"
 # -------------------------------------------------------------------------
 y1, y2 = int(height * 0.05), int(height * 0.94)
 x1, x2 = int(width * 0.10), int(width * 0.90)
-cropped_accum = accumulated_signal[y1:y2, x1:x2]
+cropped_accum = accumulated_hail[y1:y2, x1:x2]
 
-# Coordinate geografiche Italia
 lon_min, lon_max = 6.0, 19.0
 lat_min, lat_max = 35.5, 47.5
 extent = [lon_min, lon_max, lat_min, lat_max]
 
-# Colormap per l'accumulo complessivo (da trasparente ad azzurro, blu, giallo, rosso)
-cmap_custom = mcolors.LinearSegmentedColormap.from_list(
-    "accum_24h", 
-    ["#ffffff00", "#38bdf8", "#1d4ed8", "#1e1b4b", "#eab308", "#dc2626"], 
+# Colormap esclusiva della grandine accumulata nelle 24h
+cmap_hail = mcolors.LinearSegmentedColormap.from_list(
+    "hail_subset_24h", 
+    ["#ffffff00", "#38bdf8", "#1d4ed8", "#1e1b4b", "#eab308", "#ea580c"], 
     N=256
 )
 
-print("Generazione mappa riassuntiva stile Delfry...")
+print("Generazione mappa ex-novo stile Delfry...")
 fig = plt.figure(figsize=(11, 11), dpi=150)
 
 if HAS_CARTOPY:
     ax = plt.axes(projection=ccrs.PlateCarree())
     ax.set_extent(extent, crs=ccrs.PlateCarree())
 
-    # Cartografia vettoriale 10m
+    # Cartografia vettoriale ad alta risoluzione (10m)
     ax.add_feature(cfeature.LAND.with_scale('10m'), facecolor='#f8fafc')
     ax.add_feature(cfeature.OCEAN.with_scale('10m'), facecolor='#e0f2fe')
     ax.add_feature(cfeature.COASTLINE.with_scale('10m'), linewidth=0.8, edgecolor='black')
     ax.add_feature(cfeature.BORDERS.with_scale('10m'), linewidth=0.8, edgecolor='black')
     ax.add_feature(cfeature.LAKES.with_scale('10m'), facecolor='none', edgecolor='black', linewidth=0.3)
     
-    # Confini provinciali/regionali tratteggiati
+    # Confini regionali e provinciali tratteggiati
     ax.add_feature(
         cfeature.NaturalEarthFeature('cultural', 'admin_1_states_provinces_lines', '10m', facecolor='none'),
         edgecolor='gray',
@@ -149,29 +154,29 @@ if HAS_CARTOPY:
         linestyle=':'
     )
 
-    # Mascheriamo i valori nulli (< 0.2)
+    # Mascheriamo i pixel dove l'accumulo è zero o trascurabile
     masked_accum = np.ma.masked_where(cropped_accum < 0.2, cropped_accum)
 
     im = ax.imshow(
         masked_accum,
         extent=extent,
         origin='upper',
-        cmap=cmap_custom,
+        cmap=cmap_hail,
         alpha=0.85,
         transform=ccrs.PlateCarree()
     )
 else:
     ax = fig.add_subplot(111)
     masked_accum = np.ma.masked_where(cropped_accum < 0.2, cropped_accum)
-    im = ax.imshow(masked_accum, cmap=cmap_custom, origin='upper')
+    im = ax.imshow(masked_accum, cmap=cmap_hail, origin='upper')
     plt.axis('off')
 
 # Legenda e Titoli
 cbar = plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05, shrink=0.85, aspect=30)
-cbar.set_label('Accumulo Complessivo Fenomeni Intensi / Grandine (24h)', fontsize=10, fontweight='bold')
+cbar.set_label('Accumulo Complessivo Indice Grandine Effettivo (24h)', fontsize=10, fontweight='bold')
 cbar.ax.tick_params(labelsize=8)
 
-plt.title('MAPPA RIASSUNTIVA 24 ORE - ITALIA\nElaborazione dati accumulati MTS01 - MTS23', fontsize=11, fontweight='bold', pad=12)
+plt.title('MAPPA RIASSUNTIVA GRANDINE 24 ORE - ITALIA\nElaborazione sottoinsieme effettivo MTS01 - MTS23', fontsize=11, fontweight='bold', pad=12)
 
 # Firma in basso a destra
 ax.text(
@@ -191,4 +196,4 @@ output_path = "mappa_riassunto_24h.png"
 plt.savefig(output_path, bbox_inches='tight', dpi=200)
 plt.close()
 
-print(f"🖼️ Mappa salvata con successo: {output_path}")
+print(f"🖼️ Mappa riassuntiva salvata con successo: {output_path}")
