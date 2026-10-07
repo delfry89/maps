@@ -9,12 +9,11 @@ from folium.plugins import MarkerCluster
 # ==========================================
 def fetch_eswd_data():
     """
-    Recupera i dati reali delle grandinate in Italia da ESWD.
+    Recupera i dati reali delle grandinate in Italia da ESWD per l'anno 2026.
     """
     print("Scaricamento dati da ESWD...")
     reports = []
     
-    # Endpoint e parametri di richiesta per ESWD
     eswd_url = "https://eswd.eu/cgi-bin/eswd_export.cgi"
     
     headers = {
@@ -35,16 +34,17 @@ def fetch_eswd_data():
             try:
                 data = response.json()
                 events = data.get('events', []) if isinstance(data, dict) else data
-                for item in events:
-                    reports.append({
-                        'data_ora': item.get('datetime') or item.get('date'),
-                        'latitudine': float(item.get('latitude') or item.get('lat')),
-                        'longitudine': float(item.get('longitude') or item.get('lon')),
-                        'dimensione_cm': item.get('hail_size_cm') or item.get('size') or 'N/D',
-                        'localita': item.get('location', 'Italia'),
-                        'descrizione': item.get('description', 'Segnalazione grandine ESWD'),
-                        'fonte': 'ESWD'
-                    })
+                if isinstance(events, list):
+                    for item in events:
+                        reports.append({
+                            'data_ora': item.get('datetime') or item.get('date'),
+                            'latitudine': float(item.get('latitude') or item.get('lat')),
+                            'longitudine': float(item.get('longitude') or item.get('lon')),
+                            'dimensione_cm': item.get('hail_size_cm') or item.get('size') or 'N/D',
+                            'localita': item.get('location', 'Italia'),
+                            'descrizione': item.get('description', 'Segnalazione grandine ESWD'),
+                            'fonte': 'ESWD'
+                        })
             except Exception as parse_err:
                 print(f"I dati ESWD non sono in formato JSON standard: {parse_err}")
         else:
@@ -83,8 +83,11 @@ def fetch_meteonetwork_data():
         if response.status_code == 200:
             try:
                 data = response.json()
-                if isinstance(data, list):
-                    for item in data:
+                # Gestisce sia risposte trasmesse come lista diretta che come dizionario incapsulato ('reports')
+                items = data.get('reports', data) if isinstance(data, dict) else data
+                
+                if isinstance(items, list):
+                    for item in items:
                         reports.append({
                             'data_ora': item.get('datetime') or item.get('data'),
                             'latitudine': float(item.get('lat') or item.get('latitudine')),
@@ -115,7 +118,7 @@ def get_unified_data():
     # Unione dei due dataset
     df = pd.concat([df_eswd, df_mn], ignore_index=True)
     
-    # Se entrambe le chiamate non restituiscono dati, imposta dati di riserva
+    # Se entrambe le chiamate non restituiscono dati, imposta dataset di riserva
     if df.empty:
         print("Impossibile connettersi alle API esterne. Caricamento dataset di riserva 2026...")
         df = pd.DataFrame([
