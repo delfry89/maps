@@ -1,0 +1,30 @@
+name: Test Mappa Grandinate
+
+on:
+  workflow_dispatch: # Ti permette di avviarlo manualmente dalla scheda "Actions" di GitHub
+
+jobs:
+  run-grandine-script:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configura ambiente con Conda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          environment-file: environment.yml
+          activate-environment: meteo
+          auto-activate-base: false
+
+      - name: Esegui Script Grandine
+        shell: bash -l {0}
+        run: |
+          python report_grandine.py
+
+      - name: Salva Artefatti (Verifica HTML generato)
+        uses: actions/upload-artifact@v4
+        with:
+          name: mappa-grandine-html
+          path: mappa_grandine.html
