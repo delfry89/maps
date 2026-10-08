@@ -61,11 +61,8 @@ height, width, _ = images[0].shape
 # -------------------------------------------------------------------------
 def extract_hail_subset_only(img_array):
     """
-    Estrae SOLO l'Indice Grandine cromatico effettivo:
-    - Azzurro/Ciano puro
-    - Blu/Indaco sovrapposto al Rosso dei temporali (Liguria, Emilia, Lazio)
-    - Giallo/Arancione puro
-    Rimuove completamente le isoipse bianche/grigie e lo sfondo del territorio.
+    Estrae il sottoinsieme dell'Indice Grandine sia su fondi arancioni vivi (Latina/Frosinone)
+    sia su fondi rosso scuro/bordeaux (Viterbese, Liguria, Emilia).
     """
     rgb = img_array.astype(np.float32)
     r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
@@ -76,18 +73,21 @@ def extract_hail_subset_only(img_array):
 
     hail_val = np.zeros((height, width), dtype=np.float32)
 
-    # 1. AZZURRO / CIANO PURO (Grandine 0.3 - 0.4 su mari o territori chiari)
-    mask_cyan = (b > r + 15) & (b > 100) & (h >= 0.46) & (h <= 0.58) & (s > 0.20)
+    # 1. AZZURRO / CIANO PURO (Grandine 0.3 - 0.4)
+    mask_cyan = (b > r + 15) & (b > 80) & (h >= 0.46) & (h <= 0.58) & (s > 0.20)
     hail_val[mask_cyan] = 0.35
 
-    # 2. BLU / INDACO / VIOLA DA BLENDING (Grandine 0.5 - 0.7 sovrapposta al temporale ROSSO)
-    # Riconosce quando c'è BLU marcato insieme al ROSSO del fondo (Liguria, Emilia, Viterbese)
-    # Esclude il nero (v < 0.10) e il bianco delle isoipse (s < 0.25)
-    mask_blue_blend = (b > 45) & (s >= 0.25) & (v >= 0.12) & (v <= 0.85) & (h >= 0.52) & (h <= 0.82)
-    hail_val[mask_blue_blend] = 0.65
+    # 2. BLU / INDACO / VIOLA DA BLENDING (Grandine 0.5 - 0.7)
+    # A. Caso Fondo Chiaro / Medio (Latina, Frosinone, Mare): B marcatamente alto
+    mask_blue_bright = (b > 45) & (b > g + 10) & (h >= 0.50) & (h <= 0.82) & (s >= 0.20)
+    
+    # B. Caso Fondo Rosso Scuro / Bordeaux (Viterbese, Liguria, Emilia): 
+    # B ha un valore relativo importante rispetto a G (B > G + 15) e non è un nero puro
+    mask_blue_dark_blend = (b > 25) & (b > g + 15) & (r > 20) & (v > 0.08) & (v < 0.60) & (h >= 0.55) & (h <= 0.88)
+    
+    hail_val[mask_blue_bright | mask_blue_dark_blend] = 0.65
 
     # 3. GIALLO / ARANCIONE PURO (Grandine 0.8 - 0.9)
-    # Componente Rossa e Verde forti, Blu limitato (esclude il bianco e l'arancio temporalesco privo di verde)
     mask_yellow_orange = (r > 150) & (g > 110) & (b < 90) & (h >= 0.07) & (h <= 0.18) & (s >= 0.40)
     hail_val[mask_yellow_orange] = 0.88
 
@@ -99,7 +99,6 @@ def extract_hail_subset_only(img_array):
     clean_map[y1:y2, x1:x2] = hail_val[y1:y2, x1:x2]
 
     return clean_map
-
 # -------------------------------------------------------------------------
 # 3. ACCUMULO SULLE 24 ORE
 # -------------------------------------------------------------------------
