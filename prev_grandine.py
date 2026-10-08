@@ -61,8 +61,8 @@ height, width, _ = images[0].shape
 # -------------------------------------------------------------------------
 def extract_hail_subset_only(img_array):
     """
-    Estrae il sottoinsieme dell'Indice Grandine sia su fondi arancioni vivi (Latina/Frosinone)
-    sia su fondi rosso scuro/bordeaux (Viterbese, Liguria, Emilia).
+    Estrae l'Indice Grandine in modo universale (su rosso chiaro, rosso scuro e bordeaux)
+    senza perdere i pixel sfumati dall'antialiasing.
     """
     rgb = img_array.astype(np.float32)
     r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
@@ -73,27 +73,22 @@ def extract_hail_subset_only(img_array):
 
     hail_val = np.zeros((height, width), dtype=np.float32)
 
-    # 1. AZZURRO / CIANO PURO (Grandine 0.3 - 0.4)
-    mask_cyan = (b > r + 15) & (b > 80) & (h >= 0.46) & (h <= 0.58) & (s > 0.20)
+    # 1. AZZURRO / CIANO PURO (0.3 - 0.4)
+    mask_cyan = (b > r + 10) & (b > 70) & (h >= 0.44) & (h <= 0.58)
     hail_val[mask_cyan] = 0.35
 
-    # 2. BLU / INDACO / VIOLA DA BLENDING (Grandine 0.5 - 0.7)
-    # A. Caso Fondo Chiaro / Medio (Latina, Frosinone, Mare): B marcatamente alto
-    mask_blue_bright = (b > 45) & (b > g + 10) & (h >= 0.50) & (h <= 0.82) & (s >= 0.20)
-    
-    # B. Caso Fondo Rosso Scuro / Bordeaux (Viterbese, Liguria, Emilia): 
-    # B ha un valore relativo importante rispetto a G (B > G + 15) e non è un nero puro
-    mask_blue_dark_blend = (b > 25) & (b > g + 15) & (r > 20) & (v > 0.08) & (v < 0.60) & (h >= 0.55) & (h <= 0.88)
-    
-    hail_val[mask_blue_bright | mask_blue_dark_blend] = 0.65
+    # 2. BLU / INDACO / VIOLA SU FONDO ROSSO (0.5 - 0.7) -> Viterbese, Frosinone, Liguria
+    # Un pixel ha il segnale blu/indaco se il Blu è significativo rispetto al Verde e non è nero puro o grigio
+    mask_blue_blend = (b > 20) & (b > g + 4) & (s >= 0.15) & (v >= 0.08) & (h >= 0.50) & (h <= 0.88)
+    hail_val[mask_blue_blend] = 0.65
 
-    # 3. GIALLO / ARANCIONE PURO (Grandine 0.8 - 0.9)
-    mask_yellow_orange = (r > 150) & (g > 110) & (b < 90) & (h >= 0.07) & (h <= 0.18) & (s >= 0.40)
+    # 3. GIALLO / ARANCIONE PURO (0.8 - 0.9)
+    mask_yellow_orange = (r > 140) & (g > 100) & (b < 110) & (h >= 0.06) & (h <= 0.20) & (s >= 0.35)
     hail_val[mask_yellow_orange] = 0.88
 
-    # FILTRO GEOGRAFICO INTERNO (Taglia le legende esterne della mappa originale)
-    y1, y2 = int(height * 0.05), int(height * 0.94)
-    x1, x2 = int(width * 0.10), int(width * 0.90)
+    # Ritaglio preciso dell'area geografica della mappa sorgente
+    y1, y2 = int(height * 0.06), int(height * 0.93)
+    x1, x2 = int(width * 0.11), int(width * 0.89)
 
     clean_map = np.zeros_like(hail_val)
     clean_map[y1:y2, x1:x2] = hail_val[y1:y2, x1:x2]
@@ -112,12 +107,14 @@ for img in images:
 # -------------------------------------------------------------------------
 # 4. PLOTTING MAPPA EX-NOVO CON STILE "DELFRY"
 # -------------------------------------------------------------------------
-y1, y2 = int(height * 0.05), int(height * 0.94)
-x1, x2 = int(width * 0.10), int(width * 0.90)
+# Ritaglio preciso dell'area geografica della matrice
+y1, y2 = int(height * 0.06), int(height * 0.93)
+x1, x2 = int(width * 0.11), int(width * 0.89)
 cropped_accum = accumulated_hail[y1:y2, x1:x2]
 
-lon_min, lon_max = 6.0, 19.0
-lat_min, lat_max = 35.5, 47.5
+# Coordinate geografiche ritarate al millimetro sulla griglia sorgente
+lon_min, lon_max = 6.2, 18.6
+lat_min, lat_max = 36.4, 47.0
 extent = [lon_min, lon_max, lat_min, lat_max]
 
 # Palette graduata per la grandine accumulata nelle 24h
