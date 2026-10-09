@@ -61,7 +61,7 @@ height, width, _ = images[0].shape
 # 2. IDENTIFICAZIONE E MASCHERAMENTO CONTORNI LAGHI DALLA MAPPA BASE
 # -------------------------------------------------------------------------
 base_img = images[0].astype(np.float32)
-r_b, g_b, b_b = base_img[:, :, 0], base_img[:, :, 1], base_bg_b = base_img[:, :, 2]
+r_b, g_b, b_b = base_img[:, :, 0], base_img[:, :, 1], base_img[:, :, 2]
 
 # I contorni dei laghi nella mappa base sono linee sottili arancioni/marroni costanti
 mask_lake_borders = (r_b > 160) & (g_b > 80) & (g_b < 140) & (b_b < 40)
@@ -128,7 +128,7 @@ x1, x2 = int(width * 0.122), int(width * 0.878)
 
 cropped_accum = accumulated_hail[y1:y2, x1:x2]
 
-# Isolamento dello sfondo per creare un canvas totalmente pulito senza numeri (20, 30, 50)
+# Isolamento dello sfondo per creare un canvas totalmente pulito senza numeri
 base_bg = images[0][y1:y2, x1:x2].astype(np.float32)
 r_bg, g_bg, b_bg = base_bg[:, :, 0], base_bg[:, :, 1], base_bg[:, :, 2]
 
@@ -153,7 +153,7 @@ if HAS_CARTOPY:
     extent = [6.4, 18.6, 36.4, 47.0]
     ax.set_extent(extent, crs=ccrs.PlateCarree())
 
-    # 1. Sfondo completamente pulito (Senza numeri 20, 30, 50 o scritte centrometeo)
+    # 1. Sfondo completamente pulito
     ax.imshow(clean_background.astype(np.uint8), extent=extent, origin='upper', transform=ccrs.PlateCarree())
 
     # 2. Accumulo grandine sovrapposto
