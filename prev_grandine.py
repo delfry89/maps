@@ -5,14 +5,7 @@ from PIL import Image
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.colors import rgb_to_hsv
-
-# Cartopy con proiezione LambertConformal per eliminare lo sfasamento geografico
-try:
-    import cartopy.crs as ccrs
-    import cartopy.feature as cfeature
-    HAS_CARTOPY = True
-except ImportError:
-    HAS_CARTOPY = False
+from scipy.ndimage import maximum_filter
 
 # -------------------------------------------------------------------------
 # 1. DOWNLOAD DELLE MAPPE ORARIE
@@ -57,12 +50,12 @@ if not images:
 height, width, _ = images[0].shape
 
 # -------------------------------------------------------------------------
-# 2. ESTRAZIONE SOTTOINSIEME GRANDINE EFFETTIVO (SENZA FALSISMI SUL ROSSO)
+# 2. FILTRAGGIO RIGIDO ANTI-RUMORE E DILATAZIONE NUCLEI
 # -------------------------------------------------------------------------
-def extract_hail_exact_pixels(img_array):
+def extract_hail_strict_clean(img_array):
     """
-    Estrae SOLO l'Indice Grandine cromatico (Azzurro, Blu/Indaco e Giallo/Arancio)
-    sia su fondi chiari che su fondi temporaleschi rosso/bordeaux (Viterbo, Emilia, Liguria).
+    Estrae i soli nuclei di grandine reali eliminando completamente
+    l'azzurro chiaro di sfondo/rumore (Alpi, mare e confini est).
     """
     rgb = img_array.astype(np.float32)
     r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
@@ -73,25 +66,27 @@ def extract_hail_exact_pixels(img_array):
 
     hail_val = np.zeros((height, width), dtype=np.float32)
 
-    # 1. AZZURRO / CIANO PURO (Grandine 0.3 - 0.4)
-    mask_cyan = (b > r + 10) & (b > 65) & (h >= 0.44) & (h <= 0.58)
-    hail_val[mask_cyan] = 0.35
+    # 1. AZZURRO / CIANO REALE (Richiede saturazione alta s >= 0.35 e b > 110 per tagliare il rumore)
+    mask_cyan = (b > r + 35) & (b > 110) & (h >= 0.46) & (h <= 0.56) & (s >= 0.35)
+    hail_val[mask_cyan] = 0.50
 
-    # 2. BLU / INDACO / VIOLA SU FONDO ROSSO (Grandine 0.5 - 0.7)
-    # Riconosce la presenza del blu/indaco sovrapposto sia a rosso vivo che bordeaux scuro
-    mask_blue_blend = (b > 18) & (b > g + 3) & (s >= 0.12) & (v >= 0.06) & (h >= 0.48) & (h <= 0.88)
-    hail_val[mask_blue_blend] = 0.65
+    # 2. BLU / INDACO / VIOLA SU FONDO ROSSO (Grandine 0.75)
+    mask_blue_blend = (b > 25) & (b > g + 5) & (s >= 0.20) & (v >= 0.08) & (h >= 0.48) & (h <= 0.88)
+    hail_val[mask_blue_blend] = 0.75
 
-    # 3. GIALLO / ARANCIONE PURO (Grandine 0.8 - 0.9)
-    mask_yellow_orange = (r > 130) & (g > 90) & (b < 120) & (h >= 0.06) & (h <= 0.20) & (s >= 0.30)
-    hail_val[mask_yellow_orange] = 0.88
+    # 3. GIALLO / ARANCIONE PURO (Grandine 0.95)
+    mask_yellow_orange = (r > 140) & (g > 100) & (b < 110) & (h >= 0.06) & (h <= 0.20) & (s >= 0.35)
+    hail_val[mask_yellow_orange] = 0.95
 
-    # Taglio stringente per escludere cornici nere e titoli esterni
+    # DILATAZIONE MORFOLOGICA: Fa crescere i nuclei dell'area grandinigena rendendoli ben visibili
+    hail_val_dilated = maximum_filter(hail_val, size=3)
+
+    # Taglio stringente della sola griglia interna geografica
     y1, y2 = int(height * 0.082), int(height * 0.915)
     x1, x2 = int(width * 0.122), int(width * 0.878)
 
-    clean_map = np.zeros_like(hail_val)
-    clean_map[y1:y2, x1:x2] = hail_val[y1:y2, x1:x2]
+    clean_map = np.zeros_like(hail_val_dilated)
+    clean_map[y1:y2, x1:x2] = hail_val_dilated[y1:y2, x1:x2]
 
     return clean_map
 
@@ -100,73 +95,58 @@ def extract_hail_exact_pixels(img_array):
 # -------------------------------------------------------------------------
 accumulated_hail = np.zeros((height, width), dtype=np.float32)
 
-print("Estrazione precisa sottoinsieme grandine su griglia nativa...")
+print("Estrazione pulita ed espansione nuclei grandine...")
 for img in images:
-    hail_layer = extract_hail_exact_pixels(img)
+    hail_layer = extract_hail_strict_clean(img)
     accumulated_hail += hail_layer
 
 # -------------------------------------------------------------------------
-# 4. PLOTTING MAPPA CON PROIEZIONE CONICA E CONFINI PROVINCIALI
+# 4. PLOTTING SU MATRICE NATIVA (ZERO TRANSLAZIONE E ZERO RUMORE)
 # -------------------------------------------------------------------------
 y1, y2 = int(height * 0.082), int(height * 0.915)
 x1, x2 = int(width * 0.122), int(width * 0.878)
 
 cropped_accum = accumulated_hail[y1:y2, x1:x2]
 
-# Isolamento dello sfondo per creare la campitura solida senza numeri o etichette
+# Isolamento dello sfondo nativo per mantenere i confini regionali/provinciali originali
 base_bg = images[0][y1:y2, x1:x2].astype(np.float32)
 r_bg, g_bg, b_bg = base_bg[:, :, 0], base_bg[:, :, 1], base_bg[:, :, 2]
 
+# Creazione sfondo pulito
 clean_background = np.ones_like(base_bg) * 255.0
 is_sea = (r_bg > 120) & (g_bg > 180) & (b_bg > 200)
-clean_background[is_sea] = [224, 242, 254]   # Azzurro mare #e0f2fe
-clean_background[~is_sea] = [248, 250, 252]  # Bianco terraferma #f8fafc
+clean_background[is_sea] = [224, 242, 254]   # Mare #e0f2fe
+clean_background[~is_sea] = [248, 250, 252]  # Terraferma #f8fafc
 
+# Conservazione delle linee dei confini regionali/provinciali originali
+is_line = (r_bg < 55) & (g_bg < 55) & (b_bg < 55)
+clean_background[is_line] = [30, 41, 59]     # Confini scuri #1e293b
+
+# Palette ad alto contrasto per evidenziare le zone forti
 cmap_hail = mcolors.LinearSegmentedColormap.from_list(
-    "hail_24h_native_clean", 
-    ["#ffffff00", "#38bdf8", "#1d4ed8", "#1e1b4b", "#eab308", "#ea580c"], 
+    "hail_24h_vivid", 
+    ["#ffffff00", "#0284c7", "#1d4ed8", "#312e81", "#eab308", "#ea580c"], 
     N=256
 )
 
-print("Generazione mappa con confini provinciali vettoriali e zero sfasamento...")
-fig = plt.figure(figsize=(10, 10), dpi=200)
+print("Generazione mappa riassuntiva ad alta visibilità...")
+fig, ax = plt.subplots(figsize=(10, 10), dpi=200)
 
-if HAS_CARTOPY:
-    # Usiamo la proiezione LambertConformal per curvare i vettori come GrADS/WRF
-    proj = ccrs.LambertConformal(central_longitude=12.5, central_latitude=42.0)
-    ax = plt.axes(projection=proj)
-    
-    extent = [6.5, 18.5, 36.5, 47.0]
-    ax.set_extent(extent, crs=ccrs.PlateCarree())
+# 1. Disegna la base vettoriale/raster nativa (Campania e regioni perfettamente allineate)
+ax.imshow(clean_background.astype(np.uint8), origin='upper')
 
-    # 1. Sfondo solido raster pulito (senza numeri orari)
-    ax.imshow(clean_background.astype(np.uint8), extent=extent, origin='upper', transform=ccrs.PlateCarree())
+# 2. Mascheramento del rumore (Soglia < 0.60 azzera totalmente le chiazze chiare nei mari)
+masked_accum = np.ma.masked_where(cropped_accum < 0.60, cropped_accum)
+im = ax.imshow(masked_accum, cmap=cmap_hail, alpha=0.92, origin='upper')
 
-    # 2. Sovrapposizione accumulo grandine
-    masked_accum = np.ma.masked_where(cropped_accum < 0.2, cropped_accum)
-    im = ax.imshow(masked_accum, extent=extent, cmap=cmap_hail, alpha=0.85, origin='upper', transform=ccrs.PlateCarree())
+plt.axis('off')
 
-    # 3. Confini regionali e provinciali vettoriali puliti
-    ax.add_feature(cfeature.COASTLINE.with_scale('10m'), linewidth=0.7, edgecolor='#1e293b')
-    ax.add_feature(
-        cfeature.NaturalEarthFeature('cultural', 'admin_1_states_provinces_lines', '10m', facecolor='none'),
-        edgecolor='#64748b',
-        linewidth=0.4,
-        linestyle=':'
-    )
-else:
-    ax = fig.add_subplot(111)
-    ax.imshow(clean_background.astype(np.uint8), origin='upper')
-    masked_accum = np.ma.masked_where(cropped_accum < 0.2, cropped_accum)
-    im = ax.imshow(masked_accum, cmap=cmap_hail, alpha=0.85, origin='upper')
-    plt.axis('off')
-
-# Legenda e Titolo
+# Legenda e Titoli
 cbar = fig.colorbar(im, ax=ax, orientation='horizontal', pad=0.03, shrink=0.85, aspect=30)
 cbar.set_label('Accumulo Complessivo Indice Grandine Effettivo (24h)', fontsize=10, fontweight='bold')
 cbar.ax.tick_params(labelsize=8)
 
-plt.title('MAPPA RIASSUNTIVA GRANDINE 24 ORE - ITALIA\nElaborazione vettoriale allineata MTS01 - MTS23', fontsize=11, fontweight='bold', pad=12)
+plt.title('MAPPA RIASSUNTIVA GRANDINE 24 ORE - ITALIA\nElaborazione pulita dati accumulati MTS01 - MTS23', fontsize=11, fontweight='bold', pad=12)
 
 # Firma Delfry
 ax.text(
@@ -186,4 +166,4 @@ output_path = "mappa_riassunto_24h.png"
 plt.savefig(output_path, bbox_inches='tight', dpi=200)
 plt.close()
 
-print(f"🖼️ Mappa salvata con successo: {output_path}")
+print(f"🖼️ Mappa riassuntiva salvata con successo: {output_path}")
