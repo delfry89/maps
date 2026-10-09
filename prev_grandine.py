@@ -7,14 +7,6 @@ import matplotlib.colors as mcolors
 from matplotlib.colors import rgb_to_hsv
 from scipy.ndimage import maximum_filter
 
-# Supporto Cartopy per il disegno dei soli confini provinciali
-try:
-    import cartopy.crs as ccrs
-    import cartopy.feature as cfeature
-    HAS_CARTOPY = True
-except ImportError:
-    HAS_CARTOPY = False
-
 # -------------------------------------------------------------------------
 # 1. DOWNLOAD DELLE MAPPE ORARIE
 # -------------------------------------------------------------------------
@@ -65,15 +57,14 @@ r_b, g_b, b_b = base_img[:, :, 0], base_img[:, :, 1], base_img[:, :, 2]
 
 # I contorni dei laghi nella mappa base sono linee sottili arancioni/marroni costanti
 mask_lake_borders = (r_b > 160) & (g_b > 80) & (g_b < 140) & (b_b < 40)
-# Dilatiamo leggermente la maschera dei laghi per azzerare del tutto il loro contorno
 mask_lake_borders = maximum_filter(mask_lake_borders, size=3)
 
 # -------------------------------------------------------------------------
-# 3. ESTRAZIONE PULITA SOTTOINSIEME GRANDINE (SENZA LAGHI E RUMORE)
+# 3. ESTRAZIONE PULITA SOTTOINSIEME GRANDINE (NATIVO ZERO SFASAMENTO)
 # -------------------------------------------------------------------------
 def extract_hail_clean(img_array):
     """
-    Estrae solo la grandine effettiva ed esclude categoricamente i contorni dei laghi.
+    Estrae l'Indice Grandine direttamente sulla matrice pixel nativa.
     """
     rgb = img_array.astype(np.float32)
     r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
@@ -94,14 +85,13 @@ def extract_hail_clean(img_array):
 
     # 3. GIALLO / ARANCIONE PURO (Grandine 0.95 - Esclude i laghi)
     mask_yellow_orange = (r > 140) & (g > 100) & (b < 100) & (h >= 0.06) & (h <= 0.20) & (s >= 0.40)
-    # Rimuove espressamente i pixel dei contorni dei laghi
     mask_yellow_orange = mask_yellow_orange & (~mask_lake_borders)
     hail_val[mask_yellow_orange] = 0.95
 
-    # DILATAZIONE CONTROLLATA (Rende i puntini più marcati ma non sfigura)
+    # Dilatazione controllata per far risaltare i nuclei piccoli
     hail_dilated = maximum_filter(hail_val, size=2)
 
-    # Cutout rigoroso per eliminare cornici nere, scritte e numeri esterni
+    # Ritaglio per eliminare bordi neri ed intestazioni
     y1, y2 = int(height * 0.082), int(height * 0.915)
     x1, x2 = int(width * 0.122), int(width * 0.878)
 
@@ -115,79 +105,63 @@ def extract_hail_clean(img_array):
 # -------------------------------------------------------------------------
 accumulated_hail = np.zeros((height, width), dtype=np.float32)
 
-print("Estrazione pulita sottoinsieme grandine senza laghi...")
+print("Estrazione sottoinsieme grandine su matrice nativa...")
 for img in images:
     hail_layer = extract_hail_clean(img)
     accumulated_hail += hail_layer
 
 # -------------------------------------------------------------------------
-# 5. PLOTTING FINALE CON SFONDO PULITO E CONFINI PROVINCIALI
+# 5. PLOTTING SU SFONDO NATIVO CON CONFINI PROVINCIALI ORIGINALI PULITI
 # -------------------------------------------------------------------------
 y1, y2 = int(height * 0.082), int(height * 0.915)
 x1, x2 = int(width * 0.122), int(width * 0.878)
 
 cropped_accum = accumulated_hail[y1:y2, x1:x2]
 
-# Isolamento dello sfondo per creare un canvas totalmente pulito senza numeri
-base_bg = images[0][y1:y2, x1:x2].astype(np.float32)
-r_bg, g_bg, b_bg = base_bg[:, :, 0], base_bg[:, :, 1], base_bg[:, :, 2]
+# Prendiamo la prima immagine per isolare la vera rete geografica nativa GrADS
+base_crop = images[0][y1:y2, x1:x2].astype(np.float32)
+r_bg, g_bg, b_bg = base_crop[:, :, 0], base_crop[:, :, 1], base_crop[:, :, 2]
 
-clean_background = np.ones_like(base_bg) * 255.0
+# 1. Identifichiamo il Mare
 is_sea = (r_bg > 120) & (g_bg > 180) & (b_bg > 200)
-clean_background[is_sea] = [224, 242, 254]   # Mare #e0f2fe
-clean_background[~is_sea] = [250, 250, 252]  # Terraferma solida #f8fafc
 
+# 2. Identifichiamo le linee scure dei confini provinciali, regionali e costieri reali
+# I confini amministrativi GrADS sono linee scure/grigie
+is_border_lines = (r_bg < 65) & (g_bg < 65) & (b_bg < 65)
+
+# 3. Creiamo un canvas completamente pulito senza numeri (20, 30, 50) e senza scritte
+clean_background = np.ones_like(base_crop) * 255.0
+clean_background[is_sea] = [224, 242, 254]   # Mare Azzurro #e0f2fe
+clean_background[~is_sea] = [250, 250, 252]  # Terraferma #f8fafc
+
+# Ridisegniamo le sole linee provinciali/regionali native in grigio scuro nitido
+clean_background[is_border_lines] = [51, 65, 85]  # Confini nitidi #334155
+
+# Palette ad alto contrasto per l'accumulo grandine
 cmap_vivid = mcolors.LinearSegmentedColormap.from_list(
     "hail_vivid_clean", 
     ["#ffffff00", "#0284c7", "#1d4ed8", "#312e81", "#eab308", "#ea580c"], 
     N=256
 )
 
-print("Generazione mappa riassuntiva vettoriale pulita...")
-fig = plt.figure(figsize=(10, 10), dpi=200)
+print("Generazione mappa riassuntiva a sovrapposizione perfetta 1:1...")
+fig, ax = plt.subplots(figsize=(10, 10), dpi=200)
 
-if HAS_CARTOPY:
-    proj = ccrs.LambertConformal(central_longitude=12.7, central_latitude=41.9)
-    ax = plt.axes(projection=proj)
-    
-    extent = [6.4, 18.6, 36.4, 47.0]
-    ax.set_extent(extent, crs=ccrs.PlateCarree())
+# A. Disegna la cartografia nativa pulita con i confini provinciali esatti
+ax.imshow(clean_background.astype(np.uint8), origin='upper')
 
-    # 1. Sfondo completamente pulito
-    ax.imshow(clean_background.astype(np.uint8), extent=extent, origin='upper', transform=ccrs.PlateCarree())
+# B. Sovrapponi la matrice della grandine (zero traslazione)
+masked_accum = np.ma.masked_where(cropped_accum < 0.45, cropped_accum)
+im = ax.imshow(masked_accum, cmap=cmap_vivid, alpha=0.95, origin='upper')
 
-    # 2. Accumulo grandine sovrapposto
-    masked_accum = np.ma.masked_where(cropped_accum < 0.45, cropped_accum)
-    im = ax.imshow(
-        masked_accum, 
-        extent=extent, 
-        cmap=cmap_vivid, 
-        alpha=0.92, 
-        origin='upper', 
-        transform=ccrs.PlateCarree()
-    )
+plt.axis('off')
 
-    # 3. Confini Vettoriali: Coste nere e Confini Regionali/Provinciali tratteggiati
-    ax.add_feature(cfeature.COASTLINE.with_scale('10m'), linewidth=0.8, edgecolor='#1e293b')
-    ax.add_feature(
-        cfeature.NaturalEarthFeature('cultural', 'admin_1_states_provinces_lines', '10m', facecolor='none'),
-        edgecolor='#64748b',
-        linewidth=0.45,
-        linestyle=':'
-    )
-else:
-    ax = fig.add_subplot(111)
-    ax.imshow(clean_background.astype(np.uint8), origin='upper')
-    masked_accum = np.ma.masked_where(cropped_accum < 0.45, cropped_accum)
-    im = ax.imshow(masked_accum, cmap=cmap_vivid, alpha=0.92, origin='upper')
-    plt.axis('off')
-
-# Legenda e Titolo
+# Legenda e Titoli
 cbar = fig.colorbar(im, ax=ax, orientation='horizontal', pad=0.03, shrink=0.85, aspect=30)
 cbar.set_label('Accumulo Complessivo Indice Grandine Effettivo (24h)', fontsize=10, fontweight='bold')
 cbar.ax.tick_params(labelsize=8)
 
-plt.title('MAPPA RIASSUNTIVA GRANDINE 24 ORE - ITALIA\nElaborazione vettoriale pulita MTS01 - MTS23', fontsize=11, fontweight='bold', pad=12)
+plt.title('MAPPA RIASSUNTIVA GRANDINE 24 ORE - ITALIA\nElaborazione su matrice nativa (Perfetta Coincidenza Geografica)', fontsize=11, fontweight='bold', pad=12)
 
 # Firma Delfry
 ax.text(
@@ -207,4 +181,4 @@ output_path = "mappa_riassunto_24h.png"
 plt.savefig(output_path, bbox_inches='tight', dpi=200)
 plt.close()
 
-print(f"🖼️ Mappa pulita salvata con successo: {output_path}")
+print(f"🖼️ Mappa salvata con successo e perfettamente centrata: {output_path}")
