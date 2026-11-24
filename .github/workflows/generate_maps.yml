@@ -2,7 +2,7 @@ name: Generate Weather Maps Daily
 
 on:
   schedule:
-    - cron: '45 7 * * *'
+    - cron: '39 7 * * *'
   workflow_dispatch:
 
 permissions:
